@@ -306,7 +306,7 @@ export default function Report() {
 
   return (
     <div
-      className="relative min-h-screen bg-slate-50/50 p-6 font-sans text-slate-800"
+      className="relative mt-20 min-h-screen bg-slate-50/50 p-6 font-sans text-slate-800"
       style={{ fontFamily: "'Inter', sans-serif" }}
     >
       {isRefreshing ? <RefreshingOverlay label="Updating reports..." /> : null}
