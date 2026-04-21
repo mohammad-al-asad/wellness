@@ -16,6 +16,57 @@ import { getDashboardPath } from "../../lib/auth";
 import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
 import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
+function escapeCsvCell(value) {
+  const serialized =
+    value === null || value === undefined
+      ? ""
+      : typeof value === "object"
+        ? JSON.stringify(value)
+        : String(value);
+
+  if (/[",\n]/.test(serialized)) {
+    return `"${serialized.replace(/"/g, '""')}"`;
+  }
+
+  return serialized;
+}
+
+function buildCsv(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  const headers = [];
+  rows.forEach((row) => {
+    Object.keys(row).forEach((key) => {
+      if (!headers.includes(key)) {
+        headers.push(key);
+      }
+    });
+  });
+
+  const lines = [
+    headers.map((header) => escapeCsvCell(header)).join(","),
+    ...rows.map((row) =>
+      headers.map((header) => escapeCsvCell(row[header])).join(",")
+    ),
+  ];
+
+  return lines.join("\n");
+}
+
+function triggerCsvDownload(filename, content) {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 export default function RiskAlerts() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -80,6 +131,36 @@ export default function RiskAlerts() {
   const escalationAlerts = data.escalation_alerts || [];
   const summaryCards = data.summary_cards || [];
   const teamOverview = data.team_risk_overview || [];
+
+  const handleDownloadCsv = () => {
+    const rows = teamOverview.map((row) => ({
+      company: company || data?.scope?.organization_name || "All",
+      team: row.team_name || "",
+      team_code: row.team_code || "",
+      risk_level: row.risk_status || "",
+      primary_issue: row.top_issue || "",
+      selected_team: team || "All Teams",
+      range,
+      start_date: startDate || "",
+      end_date: endDate || "",
+    }));
+
+    if (!rows.length) {
+      return;
+    }
+
+    const filenameParts = [
+      "risk-alerts",
+      team || company || "all-teams",
+      range || "7d",
+    ];
+    const filename = `${filenameParts
+      .map((part) => String(part).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-"))
+      .filter(Boolean)
+      .join("-")}.csv`;
+
+    triggerCsvDownload(filename, buildCsv(rows));
+  };
 
   return (
     <div className="relative min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -149,7 +230,13 @@ export default function RiskAlerts() {
           <div className="p-8 bg-white border border-slate-100 shadow-sm rounded-3xl">
             <div className="flex items-center justify-between mb-8">
               <h3 className="text-sm font-black tracking-widest text-[#0b1b36] uppercase">Team Risk Distribution</h3>
-              <button className="text-xs font-bold text-teal-600 hover:underline">Download CSV</button>
+              <button
+                onClick={handleDownloadCsv}
+                disabled={!teamOverview.length}
+                className="text-xs font-bold text-teal-600 hover:underline disabled:text-slate-300 disabled:no-underline"
+              >
+                Download CSV
+              </button>
             </div>
             
             <div className="overflow-x-auto">
