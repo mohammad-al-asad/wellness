@@ -24,6 +24,11 @@ const PAGE_CONFIG = {
     actions: ["ranges", "team", "bell"],
     tabs: [],
   },
+  "/users": {
+    title: "Users",
+    subtitle: "Manage organization members and account access.",
+    actions: ["bell"],
+  },
   "/team-members": {
     title: "Team Performance Dashboard",
     subtitle: "Last updated: 5 minutes ago",
@@ -105,7 +110,8 @@ export default function Header({ showDrawer }) {
   }, [pathname, config]);
 
   useEffect(() => {
-    const shouldLoadSettings = config?.actions?.includes("team");
+    const shouldLoadSettings =
+      config?.actions?.includes("team") || config?.actions?.includes("bell");
     if (!shouldLoadSettings) {
       return;
     }
@@ -244,8 +250,22 @@ export default function Header({ showDrawer }) {
   }
 
   function openNotifications() {
-    const currentQuery = searchParams.toString();
-    navigate(`${notificationPath}${currentQuery ? `?${currentQuery}` : ""}`);
+    const nextParams = new URLSearchParams();
+    [
+      "company",
+      "department",
+      "team",
+      "range",
+      "start_date",
+      "end_date",
+    ].forEach((key) => {
+      const value = searchParams.get(key);
+      if (value) {
+        nextParams.set(key, value);
+      }
+    });
+    const nextQuery = nextParams.toString();
+    navigate(`${notificationPath}${nextQuery ? `?${nextQuery}` : ""}`);
   }
 
   function goBack() {
