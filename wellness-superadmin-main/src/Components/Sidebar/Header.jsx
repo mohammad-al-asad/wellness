@@ -69,6 +69,11 @@ const PAGE_CONFIG = {
     actions: ["ranges_30d", "team", "export"],
     tabs: []
   },
+  "/audit-logs": {
+    title: "Audit Logs",
+    subtitle: "Review platform activity and intervention history.",
+    actions: ["bell"],
+  },
   "/settings": {
     title: "Settings",
     subtitle: "Manage your account and preferences",

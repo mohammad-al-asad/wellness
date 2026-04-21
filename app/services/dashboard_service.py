@@ -3826,9 +3826,17 @@ class DashboardService:
         rows: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Return summary cards for the audit log page."""
-        today = date.today()
+        reference_date = max(
+            (
+                datetime.fromisoformat(row["timestamp"]).date()
+                for row in rows
+            ),
+            default=date.today(),
+        )
         total_today = sum(
-            1 for row in rows if datetime.fromisoformat(row["timestamp"]).date() == today
+            1
+            for row in rows
+            if datetime.fromisoformat(row["timestamp"]).date() == reference_date
         )
         warnings = sum(1 for row in rows if row["status"] == "Warning")
         failed = sum(1 for row in rows if row["status"] == "Failed")

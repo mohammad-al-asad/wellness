@@ -126,13 +126,6 @@ function ActionDetailModal({ entry, onClose }) {
               </div>
             </div>
 
-            {/* Status */}
-            <div>
-              <p className="mb-2 text-xs font-medium tracking-wider text-gray-400 uppercase">
-                Status
-              </p>
-              <StatusBadge status={d.status || 'Success'} />
-            </div>
           </div>
 
           {/* System Classification */}
@@ -184,7 +177,6 @@ export default function AuditLogs() {
   const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
 
   const search = params.get("query") || "";
-  const statusFilter = params.get("status") || "all";
   const page = parseInt(params.get("page") || "1");
   const timeFilter = params.get("time") || "all";
 
@@ -197,7 +189,6 @@ export default function AuditLogs() {
           params: {
             query: search,
             time_filter: timeFilter,
-            status_filter: statusFilter,
             page: page,
           },
         });
@@ -211,7 +202,7 @@ export default function AuditLogs() {
     };
 
     fetchAuditLogs();
-  }, [search, statusFilter, timeFilter, page, beginLoading, finishLoading]);
+  }, [search, timeFilter, page, beginLoading, finishLoading]);
 
   if (loading && !data) {
     return <FullPageLoadingState label="Loading Audit Logs..." />;
@@ -257,7 +248,7 @@ export default function AuditLogs() {
   };
 
   return (
-    <div className="relative min-h-screen mt-20 font-sans bg-gray-50">
+    <div className="relative min-h-screen font-sans bg-gray-50">
       {isRefreshing ? <RefreshingOverlay label="Updating audit logs..." /> : null}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
@@ -310,18 +301,6 @@ export default function AuditLogs() {
             />
           </div>
 
-          {/* Status filter */}
-          <select
-            value={statusFilter}
-            onChange={(e) => setParams({ ...Object.fromEntries(params), status: e.target.value, page: 1 })}
-            className="px-3 py-2 text-sm text-gray-600 border border-gray-200 cursor-pointer rounded-xl bg-gray-50 focus:outline-none focus:ring-2 focus:ring-teal-400"
-          >
-            <option value="all">All Status</option>
-            <option value="success">Success</option>
-            <option value="warning">Warning</option>
-            <option value="failed">Failed</option>
-          </select>
-
           {/* Clear Filters */}
           <button
             onClick={() => setParams({})}
@@ -339,7 +318,7 @@ export default function AuditLogs() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100">
-                {["Timestamp", "User", "Action", "Target", "Status", "Details"].map((h) => (
+                {["Timestamp", "User", "Action", "Target", "Details"].map((h) => (
                   <th
                     key={h}
                     className="px-5 py-4 text-xs font-bold tracking-widest text-left text-gray-400 uppercase"
@@ -387,11 +366,6 @@ export default function AuditLogs() {
                     <span className="inline-block px-2.5 py-1 bg-gray-100 rounded-lg text-xs font-medium text-gray-600 border border-gray-200">
                       {entry.target}
                     </span>
-                  </td>
-
-                  {/* Status */}
-                  <td className="px-5 py-4">
-                    <StatusBadge status={entry.outcome} />
                   </td>
 
                   {/* Details */}
