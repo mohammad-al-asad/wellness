@@ -136,6 +136,201 @@ function buildNotificationItems(payload) {
   return uniqueItems.slice(0, 5);
 }
 
+function slugifySegment(value, fallback = "scope") {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function escapeCsvCell(value) {
+  const serialized =
+    value === null || value === undefined
+      ? ""
+      : typeof value === "object"
+        ? JSON.stringify(value)
+        : String(value);
+
+  if (/[",\n]/.test(serialized)) {
+    return `"${serialized.replace(/"/g, '""')}"`;
+  }
+
+  return serialized;
+}
+
+function buildCsv(rows) {
+  if (!rows.length) {
+    return "";
+  }
+
+  const headers = [];
+  rows.forEach((row) => {
+    Object.keys(row).forEach((key) => {
+      if (!headers.includes(key)) {
+        headers.push(key);
+      }
+    });
+  });
+
+  const lines = [
+    headers.map((header) => escapeCsvCell(header)).join(","),
+    ...rows.map((row) =>
+      headers.map((header) => escapeCsvCell(row[header])).join(",")
+    ),
+  ];
+
+  return lines.join("\n");
+}
+
+function triggerCsvDownload(filename, content) {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function flattenReportForExport(reportData, exportContext) {
+  const rows = [];
+  const scope = reportData?.scope || {};
+  const selectedRange = reportData?.selected_range || exportContext.range;
+  const membersPayload = reportData?.members;
+  const members = Array.isArray(membersPayload)
+    ? membersPayload
+    : membersPayload?.items || [];
+  const performanceSeries = reportData?.performance_trends?.series || [];
+  const drivers = Array.isArray(reportData?.driver_analysis)
+    ? reportData.driver_analysis
+    : reportData?.driver_analysis?.items || [];
+  const insights = Array.isArray(reportData?.auto_generated_insights)
+    ? reportData.auto_generated_insights
+    : reportData?.auto_generated_insights?.highlights ||
+      reportData?.auto_generated_insights?.items ||
+      [];
+
+  rows.push(
+    {
+      section: "context",
+      label: "page",
+      value: exportContext.pageTitle,
+      exported_at: exportContext.exportedAt,
+    },
+    {
+      section: "context",
+      label: "organization",
+      value: scope.organization_name || exportContext.company || "All",
+    },
+    {
+      section: "context",
+      label: "department",
+      value: scope.department || exportContext.department || "All",
+    },
+    {
+      section: "context",
+      label: "team",
+      value: scope.team || exportContext.team || "All Teams",
+    },
+    {
+      section: "context",
+      label: "range",
+      value: selectedRange || "30d",
+      start_date: exportContext.startDate || "",
+      end_date: exportContext.endDate || "",
+    }
+  );
+
+  (reportData?.summary_cards || []).forEach((card) => {
+    rows.push({
+      section: "summary_card",
+      key: card.key || "",
+      label: card.label || "",
+      value: card.value ?? "",
+      delta: card.delta || "",
+      condition: card.condition || "",
+    });
+  });
+
+  performanceSeries.forEach((series) => {
+    (series.points || []).forEach((point) => {
+      rows.push({
+        section: "performance_trend",
+        series: series.label || series.key || "",
+        key: series.key || "",
+        date: point.date || point.day_label || "",
+        value: point.value ?? "",
+        benchmark: point.benchmark ?? "",
+      });
+    });
+  });
+
+  drivers.forEach((driver) => {
+    rows.push({
+      section: "driver_analysis",
+      label: driver.name || driver.label || "",
+      value: driver.value ?? driver.average_score ?? "",
+      condition: driver.condition || "",
+      color: driver.color || "",
+    });
+  });
+
+  (reportData?.risk_distribution || []).forEach((item) => {
+    rows.push({
+      section: "risk_distribution",
+      label: item.label || "",
+      count: item.count ?? "",
+      percentage: item.percentage ?? "",
+      value: item.value ?? "",
+    });
+  });
+
+  insights.forEach((insight, index) => {
+    if (typeof insight === "string") {
+      rows.push({
+        section: "insight",
+        order: index + 1,
+        title: "",
+        summary: insight,
+      });
+      return;
+    }
+
+    rows.push({
+      section: "insight",
+      order: index + 1,
+      title: insight.title || insight.headline || insight.label || "",
+      status: insight.status || insight.severity || "",
+      summary: insight.summary || insight.description || insight.message || "",
+    });
+  });
+
+  members.forEach((member) => {
+    rows.push({
+      section: "member",
+      user_id: member.user_id || "",
+      name: member.name || "",
+      email: member.email || "",
+      role: member.role || "",
+      company: member.company || scope.organization_name || exportContext.company || "",
+      department: member.department || "",
+      team: member.team || "",
+      risk_level:
+        member.risk_level || member.burnout_level || member.condition || "",
+      primary_driver: member.primary_driver || "",
+      overall_score: member.overall_score ?? "",
+      trend_summary: member.trend_summary || "",
+      updated_at: member.updated_at || "",
+    });
+  });
+
+  return buildCsv(rows);
+}
+
 export default function Header({ showDrawer }) {
   const [activeTab, setActiveTab] = useState("");
   const [settingsData, setSettingsData] = useState(null);
@@ -152,6 +347,8 @@ export default function Header({ showDrawer }) {
     searchParams.get("end_date") || ""
   );
   const [customRangeError, setCustomRangeError] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -335,6 +532,113 @@ export default function Header({ showDrawer }) {
 
   function openNotifications() {
     setIsNotificationsOpen((current) => !current);
+  }
+
+  function buildExportParams(page = 1) {
+    return {
+      company,
+      department,
+      team: selectedTeam || undefined,
+      range: selectedRange,
+      start_date: selectedRange === "custom" ? searchParams.get("start_date") || undefined : undefined,
+      end_date: selectedRange === "custom" ? searchParams.get("end_date") || undefined : undefined,
+      page,
+      page_size: 50,
+    };
+  }
+
+  async function fetchFullReportForExport() {
+    const firstResponse = await api.get(getDashboardPath("report"), {
+      params: buildExportParams(1),
+    });
+    const firstPayload = firstResponse.data.data;
+    const membersPayload = firstPayload?.members;
+    const initialMembers = Array.isArray(membersPayload)
+      ? membersPayload
+      : membersPayload?.items || [];
+    const totalPages = Array.isArray(membersPayload)
+      ? 1
+      : Math.max(1, membersPayload?.pagination?.total_pages || 1);
+
+    if (totalPages <= 1) {
+      return firstPayload;
+    }
+
+    const pageRequests = [];
+    for (let page = 2; page <= totalPages; page += 1) {
+      pageRequests.push(
+        api.get(getDashboardPath("report"), {
+          params: buildExportParams(page),
+        })
+      );
+    }
+
+    const remainingResponses = await Promise.all(pageRequests);
+    const remainingMembers = remainingResponses.flatMap((response) => {
+      const pageMembers = response.data?.data?.members;
+      return Array.isArray(pageMembers) ? pageMembers : pageMembers?.items || [];
+    });
+
+    return {
+      ...firstPayload,
+      members: Array.isArray(membersPayload)
+        ? [...initialMembers, ...remainingMembers]
+        : {
+            ...membersPayload,
+            items: [...initialMembers, ...remainingMembers],
+          },
+    };
+  }
+
+  async function handleExportReport() {
+    if (isExporting) {
+      return;
+    }
+
+    setIsNotificationsOpen(false);
+    setIsCustomRangeOpen(false);
+    setExportError("");
+    setIsExporting(true);
+
+    try {
+      const reportData = await fetchFullReportForExport();
+      const exportedAt = new Date().toISOString();
+      const exportContent = flattenReportForExport(reportData, {
+        pageTitle: title,
+        company,
+        department,
+        team: selectedTeam,
+        range: selectedRange,
+        startDate: searchParams.get("start_date") || "",
+        endDate: searchParams.get("end_date") || "",
+        exportedAt,
+      });
+
+      if (!exportContent) {
+        throw new Error("No report content was returned.");
+      }
+
+      const rangeSegment =
+        selectedRange === "custom" &&
+        (searchParams.get("start_date") || searchParams.get("end_date"))
+          ? `${searchParams.get("start_date") || "start"}-to-${searchParams.get("end_date") || "end"}`
+          : selectedRange;
+      const scopeSegment = slugifySegment(
+        company || selectedTeam || settingsData?.scope?.organization_name || "all-scopes",
+        "all-scopes"
+      );
+      const filename = `${slugifySegment(title, "report")}-${scopeSegment}-${slugifySegment(
+        rangeSegment,
+        "range"
+      )}.csv`;
+
+      triggerCsvDownload(filename, exportContent);
+    } catch (error) {
+      console.error("Failed to export report:", error);
+      setExportError("Failed to export report. Please try again.");
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   async function loadNotifications() {
@@ -567,8 +871,14 @@ export default function Header({ showDrawer }) {
 
       if (action === "export") {
         actionElements.push(
-          <button key="export" className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 font-bold text-sm rounded-lg shadow-sm hover:bg-slate-50 transition-colors">
-            <Download className="w-4 h-4" /> Export Report
+          <button
+            key="export"
+            type="button"
+            onClick={handleExportReport}
+            disabled={isExporting}
+            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 font-bold text-sm rounded-lg shadow-sm hover:bg-slate-50 transition-colors disabled:cursor-wait disabled:opacity-70"
+          >
+            <Download className="w-4 h-4" /> {isExporting ? "Exporting..." : "Export Report"}
           </button>
         );
       }
@@ -620,8 +930,13 @@ export default function Header({ showDrawer }) {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto mt-2 md:mt-0">
-          {renderActions()}
+        <div className="flex w-full md:w-auto flex-col items-stretch gap-2 md:items-end mt-2 md:mt-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto">
+            {renderActions()}
+          </div>
+          {exportError ? (
+            <p className="text-xs font-medium text-rose-600 md:text-right">{exportError}</p>
+          ) : null}
         </div>
 
       </div>
