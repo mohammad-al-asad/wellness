@@ -37,6 +37,11 @@ export function isLeaderRole(role) {
   );
 }
 
+export function isLeaderOnlyRole(role) {
+  const value = normalizeRole(role);
+  return !isSuperAdminRole(value) && isLeaderRole(value);
+}
+
 export function getDashboardPrefix() {
   return isSuperAdminRole(getStoredRole()) ? "superadmin" : "leader";
 }

@@ -3,6 +3,7 @@ import MainLayout from "../Layout/Main/Main";
 import SignIn from "../Pages/Auth/SignIn/SignIn";
 import ForgatePassword from "../Pages/Auth/ForgatePassword/ForgatePassword";
 import PrivateRoute from "./PrivateRoute";
+import LeaderOnlyRoute from "./LeaderOnlyRoute";
 import Dashboard from "../Pages/Dashboard/Dashboard";
 import VerifyCode from "../Pages/Auth/VerifyCode/VerifyCode";
 import NewPass from "../Pages/Auth/NewPass/NewPass";
@@ -60,8 +61,22 @@ export const router = createBrowserRouter([
             path: "/dashboard/burnout-risk-details",
             element: <BurnoutRiskDetails />,
           },
-          { path: "/team-members", element: <TeamMembers /> },
-          { path: "/team-profile", element: <TeamProfileView /> },
+          {
+            path: "/team-members",
+            element: (
+              <LeaderOnlyRoute>
+                <TeamMembers />
+              </LeaderOnlyRoute>
+            ),
+          },
+          {
+            path: "/team-profile",
+            element: (
+              <LeaderOnlyRoute>
+                <TeamProfileView />
+              </LeaderOnlyRoute>
+            ),
+          },
           { path: "/organization", element: <Organizations /> },
           { path: "/users", element: <Users /> },
           { path: "/user-details", element: <UsersDetails /> },

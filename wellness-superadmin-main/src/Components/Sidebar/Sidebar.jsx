@@ -1,7 +1,7 @@
 import { FiLogOut } from "react-icons/fi";
-import { BiChevronDown } from "react-icons/bi";
 import { Link, useLocation } from "react-router-dom";
 import brandlogo from "../../assets/image/dwslogo.png";
+import { getStoredUser, isLeaderOnlyRole, isLeaderRole, isSuperAdminRole } from "../../lib/auth";
 
 import {
   AlignCenterVertical,
@@ -15,23 +15,14 @@ import {
 
 import { BsBadgeAd } from "react-icons/bs";
 import { RiDashboardHorizontalLine } from "react-icons/ri";
-import { IoIosArrowDown } from "react-icons/io";
 
 const Sidebar = ({ closeDrawer }) => {
   const location = useLocation();
-  const userData = JSON.parse(localStorage.getItem("user") || "{}");
-  const rawRole = (userData.role || "").trim().toLowerCase();
-
-  const isSuperAdmin = 
-    rawRole === "superadmin" || 
-    rawRole === "super admin" || 
-    rawRole === "platform admin";
-
-  const isLeader = 
-    isSuperAdmin || 
-    rawRole === "leader" || 
-    rawRole.includes("lead") || 
-    rawRole.includes("manager");
+  const userData = getStoredUser() || {};
+  const role = userData.role || localStorage.getItem("role") || "";
+  const isSuperAdmin = isSuperAdminRole(role);
+  const isLeader = isLeaderRole(role);
+  const isLeaderOnly = isLeaderOnlyRole(role);
 
   const handleLogout = () => {
     localStorage.removeItem("access_token");
@@ -65,7 +56,7 @@ const Sidebar = ({ closeDrawer }) => {
       icon: <Users className="w-5 h-5" />,
       label: "Team Members",
       link: "/team-members",
-      visible: isLeader,
+      visible: isLeaderOnly,
     },
     {
       icon: <ChartColumnIncreasing className="w-5 h-5" />,
