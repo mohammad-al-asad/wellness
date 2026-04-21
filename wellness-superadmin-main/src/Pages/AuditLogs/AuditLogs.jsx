@@ -248,7 +248,7 @@ export default function AuditLogs() {
   };
 
   return (
-    <div className="relative min-h-screen font-sans bg-gray-50">
+    <div className="relative min-h-screen mt-20 font-sans bg-gray-50">
       {isRefreshing ? <RefreshingOverlay label="Updating audit logs..." /> : null}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
