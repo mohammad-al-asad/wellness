@@ -135,7 +135,14 @@ Body:
 {
   "name": "John Doe",
   "email": "john@example.com",
-  "password": "password123",
+  "password": "password123"
+}
+```
+
+Optional fields:
+
+```json
+{
   "organization_name": "Dominion Wellness Solutions",
   "role": "Super Admin"
 }
@@ -1011,4 +1018,3 @@ Current backend gaps that matter for this frontend:
 - no superadmin action-history route
 - no separate GET company settings route
 - no separate GET scope settings route
-
