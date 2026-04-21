@@ -12,12 +12,14 @@ import {
 import api from "../../lib/api";
 import { getDashboardPath } from "../../lib/auth";
 import { useSearchParams } from "react-router-dom";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 export default function ActionHistory() {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
   
   // Filter states
   const [team, setTeam] = useState(searchParams.get("team") || "All");
@@ -43,8 +45,9 @@ export default function ActionHistory() {
 
   useEffect(() => {
     const fetchActionHistory = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const normalizedRange = range === "Today" ? "7d" : range === "Week" ? "30d" : "90d";
         const response = await api.get(getDashboardPath("actions/history"), {
           params: {
@@ -59,16 +62,16 @@ export default function ActionHistory() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching action history:", err);
         setError("Failed to load action history.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchActionHistory();
-  }, [team, range, outcome]);
+  }, [team, range, outcome, beginLoading, finishLoading]);
 
   useEffect(() => {
     const normalizedRange = range === "Today" ? "7d" : range === "Week" ? "30d" : "90d";
@@ -84,18 +87,16 @@ export default function ActionHistory() {
     }
   }, [team, range, searchParams, setSearchParams]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-slate-600">Loading Action History...</div>
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Action History..." />;
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-rose-600">{error}</div>
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -115,7 +116,9 @@ export default function ActionHistory() {
       : "System Stable";
 
   return (
-    <div className="min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating action history..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
 
       <div className="mb-8">
         <h1 className="text-3xl font-black text-[#0b1b36] tracking-tight mb-2">Leadership Action History</h1>

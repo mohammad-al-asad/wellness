@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Users, Award, AlertTriangle, FileBarChart, Search, ChevronDown, ExternalLink } from "lucide-react";
+import { Users, Award, AlertTriangle, Search, ExternalLink } from "lucide-react";
 import api from "../../lib/api";
 import { getDashboardPath } from "../../lib/auth";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 export default function TeamMembers() {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
   
   const [search, setSearch] = useState("");
   const [show, setShow] = useState("All");
@@ -19,8 +21,9 @@ export default function TeamMembers() {
 
   useEffect(() => {
     const fetchTeamMembers = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get(getDashboardPath("members"), {
           params: {
             query: search,
@@ -31,29 +34,27 @@ export default function TeamMembers() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching team members:", err);
         setError("Failed to load team members.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchTeamMembers();
-  }, [search, show, sortBy, page, team]);
+  }, [search, show, sortBy, page, team, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-slate-600">Loading Team Members...</div>
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Team Members..." />;
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-rose-600">{error}</div>
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -63,7 +64,9 @@ export default function TeamMembers() {
   const pagination = data.pagination || { total_pages: 1, total_items: 0 };
 
   return (
-    <div className="min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating team members..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
 
       {/* Stats Cards Row */}
       <div className="grid grid-cols-2 gap-4 mb-8 sm:grid-cols-3 lg:grid-cols-5">

@@ -13,21 +13,24 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../../lib/api";
 import LogActionModal from "./LogActionModal";
 import { getDashboardPath } from "../../lib/auth";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 export default function RiskAlerts() {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
   const range = searchParams.get("range") || "7d";
   const team = searchParams.get("team") || undefined;
 
   useEffect(() => {
     const fetchRiskAlerts = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get(getDashboardPath("risk-alerts"), {
           params: {
             range,
@@ -35,29 +38,27 @@ export default function RiskAlerts() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching risk alerts:", err);
         setError("Failed to load risk alerts.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchRiskAlerts();
-  }, [range, team]);
+  }, [range, team, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-slate-600">Loading Risk Alerts...</div>
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Risk Alerts..." />;
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-rose-600">{error}</div>
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -75,7 +76,9 @@ export default function RiskAlerts() {
   const teamOverview = data.team_risk_overview || [];
 
   return (
-    <div className="min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating risk alerts..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
       
       {/* Risk Level Header */}
       <div className="flex flex-col items-start justify-between gap-6 mb-8 lg:flex-row lg:items-center">

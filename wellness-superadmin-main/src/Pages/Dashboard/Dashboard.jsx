@@ -9,6 +9,8 @@ import {
 import { BiDownArrow } from "react-icons/bi";
 import api from "../../lib/api";
 import { getDashboardPath } from "../../lib/auth";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 const KPICard = ({ title, value, change, colorClass }) => (
   <div className="p-4 bg-white border shadow-sm rounded-xl border-slate-100">
@@ -34,16 +36,17 @@ const ProgressBar = ({ label, value, colorClass }) => (
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
   const [searchParams] = useSearchParams();
   const range = searchParams.get("range") || "30d";
   const team = searchParams.get("team") || undefined;
 
   useEffect(() => {
     const fetchDashboardData = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get(getDashboardPath(), {
           params: {
             range,
@@ -51,29 +54,27 @@ export default function Dashboard() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching dashboard data:", err);
         setError("Failed to load dashboard data.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchDashboardData();
-  }, [range, team]);
+  }, [range, team, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-slate-600">Loading Dashboard...</div>
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Dashboard..." />;
   }
 
-  if (error || !data) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-rose-600">{error}</div>
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -86,7 +87,9 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen mt-20 p-6 bg-[#f9fafb] font-sans text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen mt-20 p-6 bg-[#f9fafb] font-sans text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating dashboard..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
       <h2 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">CORE PERFORMANCE INDICATORS</h2>
       <div className="grid grid-cols-2 gap-4 mb-8 sm:grid-cols-3 lg:grid-cols-5">
         <KPICard 

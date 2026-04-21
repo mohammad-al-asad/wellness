@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Users, Award, AlertTriangle, FileBarChart, Search, ChevronDown, ExternalLink } from "lucide-react";
+import { Users, Award, AlertTriangle, FileBarChart, Search, ExternalLink } from "lucide-react";
 import api from "../../lib/api";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 const iconMap = {
   total_teams: <Users className="w-5 h-5 text-blue-600" />,
@@ -14,9 +16,9 @@ const iconMap = {
 export default function Organizations() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
 
   const search = params.get("query") || "";
   const riskFilter = params.get("risk") || "all";
@@ -25,8 +27,9 @@ export default function Organizations() {
 
   useEffect(() => {
     const fetchOrganizations = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get("/dashboard/superadmin/organizations", {
           params: {
             query: search,
@@ -37,29 +40,27 @@ export default function Organizations() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching organizations:", err);
         setError("Failed to load organizations.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchOrganizations();
-  }, [search, riskFilter, sortBy, page]);
+  }, [search, riskFilter, sortBy, page, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-slate-600">Loading Organizations...</div>
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Organizations..." />;
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-rose-600">{error}</div>
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -68,7 +69,9 @@ export default function Organizations() {
   const totalPages = data.pagination?.total_pages || 1;
 
   return (
-    <div className="min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating organizations..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
 
       {/* Stats Cards Row */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">

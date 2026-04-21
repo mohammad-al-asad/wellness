@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Users, Award, AlertTriangle, FileBarChart, Search, ChevronDown, ExternalLink } from "lucide-react";
+import { Users, Award, AlertTriangle, FileBarChart, Search, ExternalLink } from "lucide-react";
 import api from "../../lib/api";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 const iconMap = {
   total_teams: <Users className="w-5 h-5 text-blue-600" />,
@@ -15,9 +17,9 @@ export default function CompanyDashboard() {
   const [params, setParams] = useSearchParams();
   const companyName = params.get("company");
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
 
   const search = params.get("query") || "";
   const filter = params.get("filter") || "All";
@@ -28,8 +30,9 @@ export default function CompanyDashboard() {
     if (!companyName) return;
 
     const fetchCompanyData = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get(`/dashboard/superadmin/organizations/${companyName}`, {
           params: {
             query: search,
@@ -40,29 +43,27 @@ export default function CompanyDashboard() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching company dashboard data:", err);
         setError("Failed to load company dashboard data.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchCompanyData();
-  }, [companyName, search, filter, sortBy, page]);
+  }, [companyName, search, filter, sortBy, page, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-slate-600">Loading Company Dashboard...</div>
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Company Dashboard..." />;
   }
 
-  if (error || !companyName) {
+  if ((error && !data) || !companyName) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-rose-600">{error || "Company name not found."}</div>
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error || "Company name not found."} />
+        </div>
       </div>
     );
   }
@@ -73,7 +74,9 @@ export default function CompanyDashboard() {
   const totalPages = membersData.pagination?.total_pages || 1;
 
   return (
-    <div className="min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating company dashboard..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
 
       <div className="mb-6">
         <h1 className="text-2xl font-extrabold text-[#0b1b36] tracking-tight">{companyName} Dashboard</h1>
@@ -255,4 +258,4 @@ export default function CompanyDashboard() {
 
     </div>
   );
-}
+}

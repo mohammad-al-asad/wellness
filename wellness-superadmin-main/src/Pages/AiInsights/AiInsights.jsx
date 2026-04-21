@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import api from "../../lib/api";
 import { getDashboardPath } from "../../lib/auth";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 const statusBadgeColorMap = {
   watch: {
@@ -27,16 +29,17 @@ const statusBadgeColorMap = {
 
 export default function AiInsights() {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
   const [searchParams] = useSearchParams();
   const range = searchParams.get("range") || "30d";
   const team = searchParams.get("team") || undefined;
 
   useEffect(() => {
     const fetchAiInsights = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get(getDashboardPath("ai-insights"), {
           params: {
             range,
@@ -44,29 +47,27 @@ export default function AiInsights() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching AI insights:", err);
         setError("Failed to load AI insights.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchAiInsights();
-  }, [range, team]);
+  }, [range, team, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20 text-slate-600">
-        Loading AI Insights...
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading AI Insights..." />;
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20 text-rose-600">
-        {error}
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -128,7 +129,9 @@ export default function AiInsights() {
     );
 
   return (
-    <div className="min-h-screen mt-20 p-6 font-sans bg-[#f9fafb] text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen mt-20 p-6 font-sans bg-[#f9fafb] text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating AI insights..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
 
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-[#0b1b36] to-[#12315c] rounded-[24px] p-10 text-white relative overflow-hidden mb-8 shadow-md">

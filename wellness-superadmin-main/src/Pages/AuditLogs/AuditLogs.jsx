@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import api from "../../lib/api";
 import { getDashboardPath } from "../../lib/auth";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 const statusConfig = {
   Success: {
@@ -176,10 +178,10 @@ function ActionDetailModal({ entry, onClose }) {
 export default function AuditLogs() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
 
   const search = params.get("query") || "";
   const statusFilter = params.get("status") || "all";
@@ -188,8 +190,9 @@ export default function AuditLogs() {
 
   useEffect(() => {
     const fetchAuditLogs = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get(getDashboardPath("audit-logs"), {
           params: {
             query: search,
@@ -199,29 +202,27 @@ export default function AuditLogs() {
           },
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching audit logs:", err);
         setError("Failed to load audit logs.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchAuditLogs();
-  }, [search, statusFilter, timeFilter, page]);
+  }, [search, statusFilter, timeFilter, page, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-slate-600">Loading Audit Logs...</div>
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Audit Logs..." />;
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20">
-        <div className="text-lg font-medium text-rose-600">{error}</div>
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -256,7 +257,8 @@ export default function AuditLogs() {
   };
 
   return (
-    <div className="min-h-screen mt-20 font-sans bg-gray-50">
+    <div className="relative min-h-screen mt-20 font-sans bg-gray-50">
+      {isRefreshing ? <RefreshingOverlay label="Updating audit logs..." /> : null}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
         * { font-family: 'DM Sans', sans-serif; }
@@ -268,6 +270,7 @@ export default function AuditLogs() {
       `}</style>
 
       <div className="px-6 py-8 mx-auto ">
+        {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
  
 
         {/* Stat Cards */}

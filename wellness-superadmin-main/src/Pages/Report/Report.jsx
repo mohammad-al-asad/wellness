@@ -4,6 +4,8 @@ import { TrendingUp, BedDouble, AlertCircle, ArrowRight, ExternalLink, Download 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../lib/api';
 import { getDashboardPath } from "../../lib/auth";
+import { ErrorState, FullPageLoadingState, RefreshingOverlay } from "../../Components/App/AsyncState";
+import { useRefetchAwareLoading } from "../../lib/useRefetchAwareLoading";
 
 const Card = ({ children, className = '' }) => (
   <div className={`bg-white rounded-xl shadow-sm border border-slate-100 ${className}`}>
@@ -19,44 +21,43 @@ const ProgressBar = ({ value, color, bgClass = "bg-slate-100" }) => (
 
 export default function Report() {
   const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { loading, isRefreshing, beginLoading, finishLoading } = useRefetchAwareLoading();
   const range = searchParams.get("range") || "30d";
 
   useEffect(() => {
     const fetchReport = async () => {
+      beginLoading();
       try {
-        setLoading(true);
+        setError(null);
         const response = await api.get(getDashboardPath("report"), {
           params: { page, range }
         });
         setData(response.data.data);
+        finishLoading(true);
       } catch (err) {
         console.error("Error fetching report:", err);
         setError("Failed to load report data.");
-      } finally {
-        setLoading(false);
+        finishLoading(false);
       }
     };
 
     fetchReport();
-  }, [page, range]);
+  }, [page, range, beginLoading, finishLoading]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen pt-20 text-slate-600 font-bold uppercase tracking-widest">
-        Loading Reports...
-      </div>
-    );
+  if (loading && !data) {
+    return <FullPageLoadingState label="Loading Reports..." />;
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center min-h-screen pt-20 text-rose-600 font-bold uppercase tracking-widest">
-        {error}
+      <div className="flex min-h-screen items-center justify-center pt-20">
+        <div className="w-full max-w-xl px-6">
+          <ErrorState message={error} />
+        </div>
       </div>
     );
   }
@@ -99,7 +100,9 @@ export default function Report() {
     : (auto_generated_insights.highlights || auto_generated_insights.items || []);
 
   return (
-    <div className="min-h-screen mt-2 p-6 bg-slate-50/50 font-sans text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="relative min-h-screen mt-2 p-6 bg-slate-50/50 font-sans text-slate-800" style={{ fontFamily: "'Inter', sans-serif" }}>
+      {isRefreshing ? <RefreshingOverlay label="Updating reports..." /> : null}
+      {error ? <div className="mb-6"><ErrorState message={error} /></div> : null}
       
       {/* Top KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
