@@ -81,6 +81,14 @@ export default function CompanyDashboard() {
   const summaryCards = data.summary_cards || [];
   const totalPages = membersData.pagination?.total_pages || 1;
 
+  const buildMemberDetailsUrl = (userId) => {
+    const nextParams = new URLSearchParams({
+      userId: String(userId),
+      company: companyName,
+    });
+    return `/user-details?${nextParams.toString()}`;
+  };
+
   return (
     <div className="relative min-h-screen p-6 mt-20 bg-[#f9fafb] font-sans" style={{ fontFamily: "'Inter', sans-serif" }}>
       {isRefreshing ? <RefreshingOverlay label="Updating company dashboard..." /> : null}
@@ -219,7 +227,7 @@ export default function CompanyDashboard() {
                   {/* Action */}
                   <td className="px-6 py-4">
                     <button
-                      onClick={() => navigate(`/user-details?userId=${m.user_id}`)}
+                      onClick={() => navigate(buildMemberDetailsUrl(m.user_id))}
                       className="flex items-center gap-1.5 text-[13px] font-extrabold text-teal-600 transition-colors hover:text-teal-800 whitespace-nowrap"
                     >
                       View Profile

@@ -9,15 +9,18 @@ import {
 } from "recharts";
 import { ChevronDown, CheckSquare, Activity } from "lucide-react";
 import api from "../../lib/api";
-import { getDashboardPath } from "../../lib/auth";
+import { getDashboardPath, getDashboardPrefix } from "../../lib/auth";
 
 export default function UsersDetails() {
   const [params] = useSearchParams();
   const userId = params.get("userId");
+  const company = params.get("company");
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [range, setRange] = useState("30d");
+  const isSuperadminCompanyView =
+    getDashboardPrefix() === "superadmin" && Boolean(company);
 
   useEffect(() => {
     if (!userId) return;
@@ -25,10 +28,14 @@ export default function UsersDetails() {
     const fetchUserDetails = async () => {
       try {
         setLoading(true);
-        const response = await api.get(`${getDashboardPath("members")}/${userId}`, {
-          params: { range: range },
+        const endpoint = isSuperadminCompanyView
+          ? `/dashboard/superadmin/organizations/${encodeURIComponent(company)}/members/${userId}`
+          : `${getDashboardPath("members")}/${userId}`;
+        const response = await api.get(endpoint, {
+          params: { range },
         });
         setData(response.data.data);
+        setError(null);
       } catch (err) {
         console.error("Error fetching user details:", err);
         setError("Failed to load user details.");
@@ -38,7 +45,7 @@ export default function UsersDetails() {
     };
 
     fetchUserDetails();
-  }, [userId, range]);
+  }, [company, isSuperadminCompanyView, range, userId]);
 
   if (loading) {
     return (
