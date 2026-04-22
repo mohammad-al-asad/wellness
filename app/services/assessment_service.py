@@ -33,10 +33,31 @@ class AssessmentService:
         self.score_repository = ScoreRepository()
         self.scoring_service = ScoringService()
 
-    async def list_questions(self) -> list[dict[str, Any]]:
-        """Return the fixed question bank ordered for display."""
+
+
+    async def list_questions(self, page: int = 1, size: int = 25) -> dict[str, Any]:
+        """Return the fixed question bank ordered for display, with pagination."""
         questions = await self.question_repository.list_all()
-        return [self._serialize_question(question) for question in questions]
+        total = len(questions)
+        
+        # Slicing logic
+        start = (page - 1) * size
+        if start < 0:
+            start = 0
+            
+        if start >= total and total > 0:
+            start = ((total - 1) // size) * size
+            
+        end = start + size
+        paged_questions = questions[start:end]
+        
+        return {
+            "total": total,
+            "page": page,
+            "size": size,
+            "total_pages": (total + size - 1) // size if size > 0 else 1,
+            "questions": [self._serialize_question(q) for q in paged_questions]
+        }
 
     async def submit_assessment(
         self,
@@ -230,6 +251,7 @@ class AssessmentService:
             or question.text in REVERSE_SCORED_QUESTION_TEXTS
         )
 
+
     def _serialize_question(self, question: Question) -> dict[str, Any]:
         """Return a serialized question payload."""
         return {
@@ -240,6 +262,7 @@ class AssessmentService:
             "options": question.options,
             "weight": question.weight,
             "order": question.order,
+            "step": (question.order - 1) // 5 + 1 if question.order > 0 else 1
         }
 
     def _serialize_score(self, score: Score) -> dict[str, Any]:

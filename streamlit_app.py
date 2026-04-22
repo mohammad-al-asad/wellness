@@ -980,21 +980,21 @@ def render_onboarding_assessment_section(questions: list[dict[str, Any]]) -> Non
         if not status_data.get("can_submit_assessment"):
             return
 
+
     st.divider()
-    questions_per_page = 5
-    total_pages = 5
     current_page = st.session_state.setdefault("assessment_page", 0)
     st.session_state.setdefault("onboarding_answers", {})
+    
+    # Filter questions for current step based on backend provided step field
+    page_questions = [q for q in questions if q.get("step") == current_page + 1]
+    total_pages = max([q.get("step", 1) for q in questions]) if questions else 1
     
     # Progress bar and page info
     progress = (current_page + 1) / total_pages
     st.progress(progress)
-    st.write(f"Page {current_page + 1} of {total_pages}")
+    st.write(f"Step {current_page + 1} of {total_pages}")
 
-    start_idx = current_page * questions_per_page
-    page_questions = questions[start_idx:start_idx + questions_per_page]
-
-    # Display 5 questions
+    # Display questions for this step
     for q in page_questions:
         q_id = q["id"]
         options = q["options"]

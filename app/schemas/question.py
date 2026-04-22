@@ -3,6 +3,8 @@
 from pydantic import BaseModel
 
 
+
+
 class QuestionRead(BaseModel):
     """Serialized question payload."""
 
@@ -13,3 +15,14 @@ class QuestionRead(BaseModel):
     options: list[str]
     weight: float
     order: int
+    step: int
+
+
+class PaginatedQuestions(BaseModel):
+    """Paginated collection of questions."""
+
+    total: int
+    page: int
+    size: int
+    total_pages: int
+    questions: list[QuestionRead]
