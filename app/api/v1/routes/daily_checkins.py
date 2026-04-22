@@ -18,12 +18,12 @@ intervention_service = InterventionService()
 
 
 @router.get("/questions", status_code=status.HTTP_200_OK)
-async def list_daily_checkin_questions() -> dict[str, Any]:
-    """Return all fixed daily check-in questions ordered for display."""
-    data = await daily_checkin_service.list_questions()
+async def list_daily_checkin_questions(page: int = 1) -> dict[str, Any]:
+    """Return paginated daily check-in questions ordered for display."""
+    data = await daily_checkin_service.list_questions(page=page)
     return success_response(
         "Daily check-in questions fetched successfully.",
-        {"questions": data},
+        data,
     )
 
 

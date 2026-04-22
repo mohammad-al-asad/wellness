@@ -15,12 +15,12 @@ weekly_checkin_service = WeeklyCheckInService()
 
 
 @router.get("/questions", status_code=status.HTTP_200_OK)
-async def list_weekly_checkin_questions() -> dict[str, Any]:
-    """Return all fixed weekly check-in questions ordered for display."""
-    data = await weekly_checkin_service.list_questions()
+async def list_weekly_checkin_questions(page: int = 1) -> dict[str, Any]:
+    """Return paginated weekly check-in questions ordered for display."""
+    data = await weekly_checkin_service.list_questions(page=page)
     return success_response(
         "Weekly check-in questions fetched successfully.",
-        {"questions": data},
+        data,
     )
 
 

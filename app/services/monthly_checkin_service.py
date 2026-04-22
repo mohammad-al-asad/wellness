@@ -27,6 +27,8 @@ from app.utils.response import error_response
 class MonthlyCheckInService:
     """Service for fixed monthly check-in retrieval and submission."""
 
+    QUESTION_PAGE_SIZES = (7, 6)
+
     def __init__(self) -> None:
         """Initialize repository dependencies."""
         self.daily_checkin_repository = DailyCheckInRepository()
@@ -36,9 +38,25 @@ class MonthlyCheckInService:
         self.scoring_service = ScoringService()
         self.streak_service = StreakService()
 
-    async def list_questions(self) -> list[dict[str, Any]]:
-        """Return the fixed monthly check-in questions ordered for display."""
-        return sorted(MONTHLY_CHECKIN_QUESTION_BANK, key=lambda question: question["order"])
+    async def list_questions(self, page: int = 1) -> dict[str, Any]:
+        """Return paginated monthly check-in questions ordered for display."""
+        questions = sorted(MONTHLY_CHECKIN_QUESTION_BANK, key=lambda question: question["order"])
+        total = len(questions)
+        total_pages = len(self.QUESTION_PAGE_SIZES)
+        current_page = min(max(page, 1), total_pages)
+
+        start = 0
+        for index in range(current_page - 1):
+            start += self.QUESTION_PAGE_SIZES[index]
+        end = start + self.QUESTION_PAGE_SIZES[current_page - 1]
+
+        return {
+            "page": current_page,
+            "page_size": self.QUESTION_PAGE_SIZES[current_page - 1],
+            "total_questions": total,
+            "total_pages": total_pages,
+            "questions": questions[start:end],
+        }
 
     async def get_status(self, current_user: User) -> dict[str, Any]:
         """Return current monthly-checkin eligibility state."""

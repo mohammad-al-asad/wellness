@@ -15,12 +15,12 @@ monthly_checkin_service = MonthlyCheckInService()
 
 
 @router.get("/questions", status_code=status.HTTP_200_OK)
-async def list_monthly_checkin_questions() -> dict[str, Any]:
-    """Return all fixed monthly check-in questions ordered for display."""
-    data = await monthly_checkin_service.list_questions()
+async def list_monthly_checkin_questions(page: int = 1) -> dict[str, Any]:
+    """Return paginated monthly check-in questions ordered for display."""
+    data = await monthly_checkin_service.list_questions(page=page)
     return success_response(
         "Monthly check-in questions fetched successfully.",
-        {"questions": data},
+        data,
     )
 
 

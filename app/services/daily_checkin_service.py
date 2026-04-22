@@ -27,6 +27,8 @@ from app.utils.response import error_response
 class DailyCheckInService:
     """Service for fixed daily check-in retrieval and submission."""
 
+    QUESTION_PAGE_SIZE = 4
+
     def __init__(self) -> None:
         """Initialize repository dependencies."""
         self.assessment_repository = AssessmentRepository()
@@ -36,9 +38,21 @@ class DailyCheckInService:
         self.scoring_service = ScoringService()
         self.streak_service = StreakService()
 
-    async def list_questions(self) -> list[dict[str, Any]]:
-        """Return the fixed daily check-in questions ordered for display."""
-        return sorted(DAILY_CHECKIN_QUESTION_BANK, key=lambda question: question["order"])
+    async def list_questions(self, page: int = 1) -> dict[str, Any]:
+        """Return paginated daily check-in questions ordered for display."""
+        questions = sorted(DAILY_CHECKIN_QUESTION_BANK, key=lambda question: question["order"])
+        total = len(questions)
+        total_pages = (total + self.QUESTION_PAGE_SIZE - 1) // self.QUESTION_PAGE_SIZE
+        current_page = min(max(page, 1), max(total_pages, 1))
+        start = (current_page - 1) * self.QUESTION_PAGE_SIZE
+        end = start + self.QUESTION_PAGE_SIZE
+        return {
+            "page": current_page,
+            "page_size": self.QUESTION_PAGE_SIZE,
+            "total_questions": total,
+            "total_pages": total_pages,
+            "questions": questions[start:end],
+        }
 
     async def submit_daily_checkin(
         self,
