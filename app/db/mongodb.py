@@ -59,9 +59,14 @@ async def init_db() -> None:
 
 
 async def seed_questions() -> None:
-    """Seed the fixed 25-question assessment bank if it is not present."""
-    existing_count = await Question.find_all().count()
-    if existing_count >= len(QUESTION_BANK):
+    """Seed the fixed 25-question assessment bank if it is missing or outdated."""
+    existing_questions = await Question.find_all().sort(Question.order).to_list()
+    has_expected_count = len(existing_questions) == len(QUESTION_BANK)
+    has_expected_codes = all(
+        getattr(question, "code", None) == expected["code"]
+        for question, expected in zip(existing_questions, QUESTION_BANK)
+    )
+    if has_expected_count and has_expected_codes:
         return
 
     await Question.find_all().delete()

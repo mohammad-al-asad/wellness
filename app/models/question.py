@@ -9,6 +9,7 @@ from pydantic import Field
 class Question(Document):
     """Assessment question definition."""
 
+    code: str | None = None
     text: str
     driver: Literal["PC", "MR", "MC", "PA", "RC"]
     response_type: Literal["scale", "multiple_choice"]

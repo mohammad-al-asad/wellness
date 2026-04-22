@@ -127,7 +127,7 @@ ORGANIZATION_METADATA: dict[str, dict[str, str]] = {
 
 APP_VERSION: str = "DWS Performance v2.4.1"
 
-QUESTION_BANK: list[dict[str, Any]] = [
+_QUESTION_BANK: list[dict[str, Any]] = [
     {
         "text": "How would you describe your energy on most days?",
         "driver": "RC",
@@ -328,6 +328,14 @@ QUESTION_BANK: list[dict[str, Any]] = [
         "weight": 1.0,
         "order": 25,
     },
+]
+
+QUESTION_BANK: list[dict[str, Any]] = [
+    {
+        "code": f"q{question['order']:02d}",
+        **question,
+    }
+    for question in _QUESTION_BANK
 ]
 
 DAILY_CHECKIN_QUESTION_BANK: list[dict[str, Any]] = [

@@ -94,7 +94,7 @@ class AssessmentService:
                 ),
             )
 
-        question_map = {str(question.id): question for question in questions}
+        question_map = {question.code: question for question in questions}
         submitted_ids = [item.question_id for item in payload.answers]
 
         if len(set(submitted_ids)) != ASSESSMENT_QUESTION_COUNT:
@@ -226,7 +226,7 @@ class AssessmentService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_response(
                     "Invalid answer option submitted.",
-                    {str(question.id): f"Answer must match one of: {', '.join(question.options)}"},
+                    {question.code: f"Answer must match one of: {', '.join(question.options)}"},
                 ),
             )
 
@@ -237,7 +237,7 @@ class AssessmentService:
             reverse_scored=self._is_reverse_scored(question),
         )
         return Answer(
-            question_id=str(question.id),
+            question_id=question.code,
             question_text=question.text,
             answer_text=question.options[option_index],
             numeric_value=numeric_value,
@@ -255,7 +255,7 @@ class AssessmentService:
     def _serialize_question(self, question: Question) -> dict[str, Any]:
         """Return a serialized question payload."""
         return {
-            "id": str(question.id),
+            "id": question.code,
             "text": question.text,
             "driver": question.driver,
             "response_type": question.response_type,
