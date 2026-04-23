@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from app.db.repositories.assessment_repo import AssessmentRepository
 from app.db.repositories.question_repo import QuestionRepository
 from app.db.repositories.score_repo import ScoreRepository
+from app.db.repositories.user_repo import UserRepository
 from app.models.assessment import Answer, CheckIn
 from app.models.question import Question
 from app.models.score import Score
@@ -31,6 +32,7 @@ class AssessmentService:
         self.question_repository = QuestionRepository()
         self.assessment_repository = AssessmentRepository()
         self.score_repository = ScoreRepository()
+        self.user_repository = UserRepository()
         self.scoring_service = ScoringService()
 
 
@@ -142,6 +144,13 @@ class AssessmentService:
                 condition=condition,
             )
         )
+
+        if not current_user.onboarding_completed:
+            await self.user_repository.update_user(
+                str(current_user.id),
+                {"onboarding_completed": True},
+            )
+            current_user.onboarding_completed = True
 
         return {
             "overall_score": overall_score,
