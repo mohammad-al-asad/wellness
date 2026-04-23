@@ -52,3 +52,12 @@ class UserRepository:
         user.updated_at = datetime.utcnow()
         await user.save()
         return user
+
+    async def delete_user(self, user_id: str) -> User | None:
+        """Delete a user document permanently."""
+        user = await self.get_by_id(user_id)
+        if user is None:
+            return None
+
+        await user.delete()
+        return user

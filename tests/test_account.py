@@ -11,21 +11,21 @@ from app.services.account_service import AccountService
 async def test_delete_account_deactivates_user_and_deletes_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Deleting an account should deactivate the user and remove the profile."""
+    """Deleting an account should remove both the user and profile records."""
     service = AccountService()
     user = SimpleNamespace(id="user-1")
-    deactivated_user = SimpleNamespace(id="user-1", is_active=False)
+    deleted_user = SimpleNamespace(id="user-1")
     captured_delete_profile: dict[str, object] = {}
 
-    async def fake_deactivate_user(user_id: str) -> SimpleNamespace:
+    async def fake_delete_user(user_id: str) -> SimpleNamespace:
         assert user_id == "user-1"
-        return deactivated_user
+        return deleted_user
 
     async def fake_delete_by_user_id(user_id: str) -> bool:
         captured_delete_profile["user_id"] = user_id
         return True
 
-    monkeypatch.setattr(service.user_repository, "deactivate_user", fake_deactivate_user)
+    monkeypatch.setattr(service.user_repository, "delete_user", fake_delete_user)
     monkeypatch.setattr(
         service.profile_repository,
         "delete_by_user_id",
@@ -36,6 +36,6 @@ async def test_delete_account_deactivates_user_and_deletes_profile(
 
     assert response == {
         "action": "delete_account",
-        "detail": "Account deactivated successfully.",
+        "detail": "Account deleted successfully.",
     }
     assert captured_delete_profile == {"user_id": "user-1"}

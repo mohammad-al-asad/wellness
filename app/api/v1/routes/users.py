@@ -100,7 +100,7 @@ async def get_account_summary(
 async def delete_my_account(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Soft-delete the authenticated user's account."""
+    """Permanently delete the authenticated user's account and profile."""
     data = await account_service.delete_account(current_user)
     return success_response("Account deleted successfully.", data)
 

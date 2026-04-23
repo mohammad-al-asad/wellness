@@ -175,13 +175,13 @@ class AccountService:
         return {"action": "logout", "detail": "Session cleared on client side."}
 
     async def delete_account(self, current_user: User) -> dict[str, str]:
-        """Soft-delete the authenticated user's account."""
-        user = await self.user_repository.deactivate_user(str(current_user.id))
+        """Permanently delete the authenticated user's account and profile."""
+        user = await self.user_repository.delete_user(str(current_user.id))
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=error_response("User not found."),
             )
         await self.profile_repository.delete_by_user_id(current_user.id)
-        return {"action": "delete_account", "detail": "Account deactivated successfully."}
+        return {"action": "delete_account", "detail": "Account deleted successfully."}
 
