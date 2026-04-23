@@ -46,7 +46,10 @@ class AuthService:
         """Register a user and return issued tokens with the serialized user."""
         self._validate_organization_role(data.organization_name, data.role)
         existing_user = await self.user_repository.get_by_email(data.email)
-        if existing_user is not None:
+        verification_code = generate_verification_code()
+        expires_at = utc_now() + timedelta(minutes=CODE_EXPIRY_MINUTES)
+
+        if existing_user is not None and existing_user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_response(
@@ -55,19 +58,35 @@ class AuthService:
                 ),
             )
 
-        verification_code = generate_verification_code()
-        expires_at = utc_now() + timedelta(minutes=CODE_EXPIRY_MINUTES)
-        user = await self.user_repository.create_user(
-            {
-                "name": data.name,
-                "email": data.email,
-                "hashed_password": get_password_hash(data.password),
-                "organization_name": data.organization_name,
-                "role": data.role,
-                "email_verification_code": verification_code,
-                "email_verification_expires_at": expires_at,
-            }
-        )
+        if existing_user is not None:
+            user = await self.user_repository.update_user(
+                str(existing_user.id),
+                {
+                    "name": data.name,
+                    "hashed_password": get_password_hash(data.password),
+                    "organization_name": data.organization_name,
+                    "role": data.role,
+                    "is_active": True,
+                    "is_verified": False,
+                    "onboarding_completed": False,
+                    "email_verification_code": verification_code,
+                    "email_verification_expires_at": expires_at,
+                    "password_reset_code": None,
+                    "password_reset_expires_at": None,
+                },
+            )
+        else:
+            user = await self.user_repository.create_user(
+                {
+                    "name": data.name,
+                    "email": data.email,
+                    "hashed_password": get_password_hash(data.password),
+                    "organization_name": data.organization_name,
+                    "role": data.role,
+                    "email_verification_code": verification_code,
+                    "email_verification_expires_at": expires_at,
+                }
+            )
 
         await self.email_service.send_verification_email(
             to=user.email,
