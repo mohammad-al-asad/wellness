@@ -182,5 +182,6 @@ class AccountService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=error_response("User not found."),
             )
+        await self.profile_repository.delete_by_user_id(current_user.id)
         return {"action": "delete_account", "detail": "Account deactivated successfully."}
 

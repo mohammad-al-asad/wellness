@@ -65,3 +65,12 @@ class ProfileRepository:
         profile.updated_at = datetime.now(timezone.utc)
         await profile.save()
         return profile
+
+    async def delete_by_user_id(self, user_id: PydanticObjectId) -> bool:
+        """Delete a profile by user identifier if it exists."""
+        profile = await self.get_by_user_id(user_id)
+        if profile is None:
+            return False
+
+        await profile.delete()
+        return True
