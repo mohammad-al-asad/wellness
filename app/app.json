@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Dominion Wellness",
+    "slug": "dominion-wellness-solutions",
+    "version": "1.0.0",
+    "scheme": "dominionwellness",
+    "orientation": "portrait",
+    "icon": "./assets/singleLogo.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/Splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0D2B6E"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/singleLogo.png"
+      },
+      "package": "com.blackboys.dominionwellnesssolutions"
+    },
+    "web": {
+      "favicon": "./assets/singleLogo.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "103eed20-2587-4957-9a33-42ae00534cae"
+      }
+    }
+  }
+}
