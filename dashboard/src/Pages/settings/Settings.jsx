@@ -46,6 +46,11 @@ export default function Settings() {
     { enabled: isSuperAdmin },
     [isSuperAdmin],
   );
+  const faqs = useApi(
+    "/dashboard/superadmin/faqs",
+    { enabled: isSuperAdmin },
+    [isSuperAdmin],
+  );
 
   const [profileForm, setProfileForm] = useState({
     name: "",
@@ -74,6 +79,12 @@ export default function Settings() {
     privacy: { title: "", content: "", image_url: "" },
     terms: { title: "", content: "", image_url: "" },
     about: { title: "", content: "", image_url: "" },
+  });
+  const [editingFaq, setEditingFaq] = useState(null);
+  const [faqForm, setFaqForm] = useState({
+    question: "",
+    answer: "",
+    order: 0,
   });
   const [message, setMessage] = useState("");
 
@@ -145,6 +156,38 @@ export default function Settings() {
     }
   }
 
+  async function handleFaqSubmit(event) {
+    event.preventDefault();
+    setMessage("");
+    try {
+      const method = editingFaq ? "PATCH" : "POST";
+      const path = editingFaq
+        ? `/dashboard/superadmin/faqs/${editingFaq._id}`
+        : "/dashboard/superadmin/faqs";
+      const payload = await apiRequest(path, { method, body: faqForm });
+      setMessage(payload?.message || "FAQ saved.");
+      setEditingFaq(null);
+      setFaqForm({ question: "", answer: "", order: 0 });
+      faqs.refetch();
+    } catch (err) {
+      setMessage(err.message || "FAQ save failed.");
+    }
+  }
+
+  async function deleteFaq(faqId) {
+    if (!window.confirm("Are you sure you want to delete this FAQ?")) return;
+    setMessage("");
+    try {
+      await apiRequest(`/dashboard/superadmin/faqs/${faqId}`, {
+        method: "DELETE",
+      });
+      setMessage("FAQ deleted.");
+      faqs.refetch();
+    } catch (err) {
+      setMessage(err.message || "Delete failed.");
+    }
+  }
+
   async function submitPassword(event) {
     event.preventDefault();
     setMessage("");
@@ -173,7 +216,8 @@ export default function Settings() {
         superadminScope.loading ||
         privacy.loading ||
         terms.loading ||
-        about.loading));
+        about.loading ||
+        faqs.loading));
   const error =
     settingsMenu.error ||
     (isSuperAdmin && passwordMeta.error) ||
@@ -183,7 +227,8 @@ export default function Settings() {
         superadminScope.error ||
         privacy.error ||
         terms.error ||
-        about.error));
+        about.error ||
+        faqs.error));
   const passwordSubtitle =
     passwordMeta.data?.subtitle ||
     settingsMenu.data?.password_settings?.subtitle ||
@@ -209,6 +254,7 @@ export default function Settings() {
               privacy.refetch();
               terms.refetch();
               about.refetch();
+              faqs.refetch();
             }
           }}
         />
@@ -377,6 +423,102 @@ export default function Settings() {
               </div>
             </SectionCard>
           ))}
+
+          <SectionCard title="FAQ Management">
+            <div className="space-y-6">
+              <form onSubmit={handleFaqSubmit} className="grid gap-4 rounded-xl border border-slate-100 bg-slate-50/50 p-4">
+                <h4 className="font-medium text-slate-900">
+                  {editingFaq ? "Edit FAQ" : "Add New FAQ"}
+                </h4>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Question</span>
+                  <input
+                    required
+                    value={faqForm.question}
+                    onChange={(e) => setFaqForm({ ...faqForm, question: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    placeholder="Enter question"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Answer</span>
+                  <textarea
+                    required
+                    value={faqForm.answer}
+                    onChange={(e) => setFaqForm({ ...faqForm, answer: e.target.value })}
+                    className="min-h-24 w-full rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    placeholder="Enter answer"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-medium text-slate-700">Order</span>
+                  <input
+                    type="number"
+                    value={faqForm.order}
+                    onChange={(e) => setFaqForm({ ...faqForm, order: parseInt(e.target.value) })}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3"
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button type="submit" className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-slate-800">
+                    {editingFaq ? "Update FAQ" : "Add FAQ"}
+                  </button>
+                  {editingFaq && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingFaq(null);
+                        setFaqForm({ question: "", answer: "", order: 0 });
+                      }}
+                      className="rounded-xl border border-slate-200 bg-white px-6 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              <div className="divide-y divide-slate-100">
+                {faqs.data?.map((faq) => (
+                  <div key={faq._id} className="flex items-start justify-between py-4">
+                    <div className="space-y-1">
+                      <p className="font-medium text-slate-900">{faq.question}</p>
+                      <p className="text-sm text-slate-600 line-clamp-2">{faq.answer}</p>
+                      <p className="text-xs text-slate-400">Order: {faq.order}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingFaq(faq);
+                          setFaqForm({
+                            question: faq.question,
+                            answer: faq.answer,
+                            order: faq.order,
+                          });
+                        }}
+                        className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                      >
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => deleteFaq(faq._id)}
+                        className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                      >
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {(!faqs.data || faqs.data.length === 0) && (
+                  <p className="py-8 text-center text-sm text-slate-400">No FAQs found.</p>
+                )}
+              </div>
+            </div>
+          </SectionCard>
         </>
       ) : null}
     </div>

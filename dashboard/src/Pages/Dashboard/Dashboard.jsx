@@ -50,6 +50,16 @@ export default function Dashboard() {
       beginLoading();
       try {
         setError(null);
+        console.log(getDashboardPath(), {
+          params: {
+            company,
+            range,
+            team,
+            start_date: startDate,
+            end_date: endDate,
+          },
+        });
+        
         const response = await api.get(getDashboardPath(), {
           params: {
             company,

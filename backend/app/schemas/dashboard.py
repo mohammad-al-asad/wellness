@@ -183,6 +183,22 @@ class SuperadminLegalContentUpdate(BaseModel):
     image_url: str | None = Field(default=None, max_length=500)
 
 
+class SuperadminFAQCreate(BaseModel):
+    """Payload for superadmin FAQ creation."""
+
+    question: str = Field(min_length=1, max_length=500)
+    answer: str = Field(min_length=1)
+    order: int = 0
+
+
+class SuperadminFAQUpdate(BaseModel):
+    """Payload for superadmin FAQ updates."""
+
+    question: str | None = Field(default=None, min_length=1, max_length=500)
+    answer: str | None = Field(default=None, min_length=1)
+    order: int | None = None
+
+
 class HomeDashboardResponse(BaseModel):
     """Full home dashboard payload."""
 

@@ -10,7 +10,10 @@ from app.db.repositories.daily_checkin_repo import DailyCheckInRepository
 from app.db.repositories.monthly_checkin_repo import MonthlyCheckInRepository
 from app.db.repositories.score_repo import ScoreRepository
 from app.db.repositories.user_repo import UserRepository
+from app.db.repositories.support_request_repo import SupportRequestRepository
 from app.db.repositories.weekly_checkin_repo import WeeklyCheckInRepository
+from app.db.repositories.app_setting_repo import AppSettingRepository
+from app.db.repositories.faq_repo import FAQRepository
 from app.models.user import User
 from app.utils.constants import APP_VERSION, ORGANIZATION_METADATA
 from app.utils.response import error_response
@@ -28,6 +31,9 @@ class AccountService:
         self.monthly_checkin_repository = MonthlyCheckInRepository()
         self.score_repository = ScoreRepository()
         self.user_repository = UserRepository()
+        self.support_request_repository = SupportRequestRepository()
+        self.app_setting_repository = AppSettingRepository()
+        self.faq_repository = FAQRepository()
         self.dimension_labels = {
             "PC": "Physical Capacity",
             "MR": "Mental Resilience",
@@ -133,24 +139,48 @@ class AccountService:
 
     async def get_help_center(self) -> dict[str, Any]:
         """Return help center content."""
+        faqs = await self.faq_repository.get_all()
+        faq_list = (
+            [{"question": f.question, "answer": f.answer} for f in faqs]
+            if faqs
+            else self.faqs
+        )
         return {
             "title": "How can we help?",
             "subtitle": "Search our knowledge base or browse FAQs below.",
-            "faqs": self.faqs,
+            "faqs": faq_list,
             "support_cta_title": "Still need help?",
             "support_cta_description": "Our support team is available 24/7 to assist you with any questions.",
         }
 
     async def get_privacy_policy(self) -> dict[str, Any]:
         """Return privacy policy content."""
+        setting = await self.app_setting_repository.get_by_key("privacy_policy")
+        if setting:
+            return {
+                "title": setting.title,
+                "items": [i.strip() for i in setting.content.split("\n") if i.strip()],
+            }
         return {"title": "Privacy Policy", "items": self.legal_items}
 
     async def get_terms_of_condition(self) -> dict[str, Any]:
         """Return terms of condition content."""
+        setting = await self.app_setting_repository.get_by_key("terms_and_conditions")
+        if setting:
+            return {
+                "title": setting.title,
+                "items": [i.strip() for i in setting.content.split("\n") if i.strip()],
+            }
         return {"title": "Terms of Condition", "items": self.legal_items}
 
     async def get_about_us(self) -> dict[str, Any]:
         """Return about us content."""
+        setting = await self.app_setting_repository.get_by_key("about_us")
+        if setting:
+            return {
+                "title": setting.title,
+                "items": [i.strip() for i in setting.content.split("\n") if i.strip()],
+            }
         return {"title": "About Us", "items": self.legal_items}
 
     async def submit_support_request(
@@ -167,6 +197,13 @@ class AccountService:
                     {"issue": "Please describe the issue you are experiencing."},
                 ),
             )
+        # Persist the support request
+        await self.support_request_repository.create(
+            user_id=current_user.id,
+            email=current_user.email,
+            issue=issue.strip(),
+        )
+
         return {
             "email": current_user.email,
             "issue": issue.strip(),
@@ -189,6 +226,7 @@ class AccountService:
         await self.daily_checkin_repository.delete_by_user_id(current_user.id)
         await self.weekly_checkin_repository.delete_by_user_id(current_user.id)
         await self.monthly_checkin_repository.delete_by_user_id(current_user.id)
+        await self.support_request_repository.delete_by_user_id(current_user.id)
         await self.profile_repository.delete_by_user_id(current_user.id)
         user = await self.user_repository.delete_user(str(current_user.id))
         if user is None:

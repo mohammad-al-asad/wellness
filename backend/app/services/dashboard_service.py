@@ -14,6 +14,7 @@ from app.db.repositories.app_setting_repo import AppSettingRepository
 from app.db.repositories.assessment_repo import AssessmentRepository
 from app.db.repositories.daily_checkin_repo import DailyCheckInRepository
 from app.db.repositories.monthly_checkin_repo import MonthlyCheckInRepository
+from app.db.repositories.faq_repo import FAQRepository
 from app.db.repositories.profile_repo import ProfileRepository
 from app.db.repositories.score_repo import ScoreRepository
 from app.db.repositories.user_repo import UserRepository
@@ -25,6 +26,8 @@ from app.schemas.dashboard import (
     LeaderSettingsCompanyUpdate,
     LeaderSettingsProfileUpdate,
     LeaderSettingsScopeUpdate,
+    SuperadminFAQCreate,
+    SuperadminFAQUpdate,
     SuperadminLegalContentUpdate,
     SuperadminUserUpdate,
     TeamActionLogCreate,
@@ -58,6 +61,7 @@ class DashboardService:
         self.ai_service = AIService()
         self.account_service = AccountService()
         self.meta_service = MetaService()
+        self.faq_repository = FAQRepository()
         self.dimension_labels = {
             "PC": "Physical Capacity",
             "MR": "Mental Resilience",
@@ -107,7 +111,9 @@ class DashboardService:
 
     async def get_home_dashboard(self, user: User) -> dict[str, Any]:
         """Return the full home dashboard payload."""
-        latest_score, previous_score = await self._get_latest_and_previous_scores(user.id)
+        latest_score, previous_score = await self._get_latest_and_previous_scores(
+            user.id
+        )
         if latest_score is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -140,6 +146,9 @@ class DashboardService:
             ),
             "behavior_streaks": await self.get_behavior_streaks(user.id),
             "daily_checkin_status": await self.get_daily_checkin_status(user.id),
+            "next_checkin_type": (await self.get_checkin_status(user.id))[
+                "next_checkin_type"
+            ],
             "trend_insight": await self.get_trend_insight(user.id),
             "dashboard_indicators": burnout_payload["dashboard_indicators"],
             "burnout_alert": burnout_payload["burnout_alert"],
@@ -163,7 +172,9 @@ class DashboardService:
     ) -> dict[str, Any]:
         """Return the overall performance card."""
         if latest_score is None:
-            latest_score, previous_score = await self._get_latest_and_previous_scores(user_id)
+            latest_score, previous_score = await self._get_latest_and_previous_scores(
+                user_id
+            )
 
         if latest_score is None:
             raise HTTPException(
@@ -240,7 +251,7 @@ class DashboardService:
             if score_day not in score_by_day:
                 score_by_day[score_day] = score.overall_score
 
-        today = date.today()
+        today = datetime.utcnow().date()
         progress: list[dict[str, Any]] = []
         for offset in range(6, -1, -1):
             current_day = today - timedelta(days=offset)
@@ -261,8 +272,11 @@ class DashboardService:
         latest_score = await self.score_repository.get_latest_by_user_id(user_id)
         if latest_score is None:
             return []
-        selected_dimensions = weakest_dimensions or self.recommendation_service.get_weakest_dimensions(
-            latest_score.dimension_scores
+        selected_dimensions = (
+            weakest_dimensions
+            or self.recommendation_service.get_weakest_dimensions(
+                latest_score.dimension_scores
+            )
         )
         return await self.recommendation_service.get_personalized_improvement_plan(
             selected_dimensions
@@ -277,8 +291,11 @@ class DashboardService:
         latest_score = await self.score_repository.get_latest_by_user_id(user_id)
         if latest_score is None:
             return []
-        selected_dimensions = weakest_dimensions or self.recommendation_service.get_weakest_dimensions(
-            latest_score.dimension_scores
+        selected_dimensions = (
+            weakest_dimensions
+            or self.recommendation_service.get_weakest_dimensions(
+                latest_score.dimension_scores
+            )
         )
         return await self.recommendation_service.get_leader_action_plan(
             selected_dimensions
@@ -292,12 +309,45 @@ class DashboardService:
         """Return whether the user should still complete a daily check-in."""
         checkins = await self.daily_checkin_repository.list_by_user_id(user_id)
         latest_checkin_date = checkins[0].submitted_at.date() if checkins else None
-        completed_today = latest_checkin_date == date.today()
+        completed_today = latest_checkin_date == datetime.utcnow().date()
         return {
             "should_show_daily_checkin": not completed_today,
             "last_checkin_date": latest_checkin_date,
             "daily_checkin_completed_today": completed_today,
         }
+
+    async def get_checkin_status(self, user_id: Any) -> dict[str, Any]:
+        """Return the next required check-in type for the user based on sequence.
+
+        Priority: Daily -> Weekly (if eligible) -> Monthly (if eligible).
+        """
+        # 1. Check Daily completion for today
+        daily_status = await self.get_daily_checkin_status(user_id)
+        if daily_status["should_show_daily_checkin"]:
+            return {"next_checkin_type": "daily"}
+
+        # 2. Check Weekly eligibility and completion
+        current_daily_streak = await self.streak_service.get_current_streak(user_id)
+        existing_weekly = await self.weekly_checkin_repository.get_for_current_week(
+            user_id,
+            datetime.utcnow(),
+        )
+        if current_daily_streak >= 7 and existing_weekly is None:
+            return {"next_checkin_type": "weekly"}
+
+        # 3. Check Monthly eligibility and completion
+        daily_checkins = await self.daily_checkin_repository.list_by_user_id(user_id)
+        completed_daily_days = len(
+            {checkin.submitted_at.date() for checkin in daily_checkins}
+        )
+        existing_monthly = await self.monthly_checkin_repository.get_for_current_month(
+            user_id,
+            datetime.utcnow(),
+        )
+        if completed_daily_days >= 30 and existing_monthly is None:
+            return {"next_checkin_type": "monthly"}
+
+        return {"next_checkin_type": "none"}
 
     async def get_trend_insight(self, user_id: Any) -> str:
         """Return a short trend summary derived from recent progress."""
@@ -335,25 +385,29 @@ class DashboardService:
         end_date: date | None = None,
     ) -> dict[str, Any]:
         """Return aggregated team/leader dashboard data for the user's org scope."""
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            department,
-            team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                department,
+                team,
+            )
         )
         range_days = self._resolve_range_days(range_key, start_date, end_date)
-        trend_end_date = end_date or date.today()
+        trend_end_date = end_date or datetime.utcnow().date()
 
         member_profiles = await self.profile_repository.list_by_scope(
             organization_name,
             scope_department,
             scope_team,
         )
-        if not member_profiles:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=error_response("No team members found for the selected scope."),
-            )
+        # Allow empty member profiles to return a default empty response instead of 404
+        # if not member_profiles:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_404_NOT_FOUND,
+        #         detail=error_response("No team members found for the selected scope."),
+        #     )
+
 
         member_contexts: list[dict[str, Any]] = []
         latest_scores: list[Score] = []
@@ -371,9 +425,15 @@ class DashboardService:
             latest_score = member_scores[0] if member_scores else None
             if latest_score is not None:
                 latest_scores.append(latest_score)
-            member_daily = await self.daily_checkin_repository.list_by_user_id(member.user_id)
-            member_weekly = await self.weekly_checkin_repository.list_by_user_id(member.user_id)
-            member_monthly = await self.monthly_checkin_repository.list_by_user_id(member.user_id)
+            member_daily = await self.daily_checkin_repository.list_by_user_id(
+                member.user_id
+            )
+            member_weekly = await self.weekly_checkin_repository.list_by_user_id(
+                member.user_id
+            )
+            member_monthly = await self.monthly_checkin_repository.list_by_user_id(
+                member.user_id
+            )
             burnout_payload = self.burnout_service.build_payload_from_checkins(
                 member_daily,
                 member_weekly,
@@ -395,7 +455,9 @@ class DashboardService:
                     "user_id": str(member.user_id),
                     "name": member.name,
                     "burnout_level": burnout_payload["burnout_alert"]["level"],
-                    "signals_in_risk": burnout_payload["burnout_alert"]["signals_in_risk"],
+                    "signals_in_risk": burnout_payload["burnout_alert"][
+                        "signals_in_risk"
+                    ],
                     "is_elevated": burnout_payload["burnout_alert"]["is_active"],
                     "stress_value": metrics["stress"]["value"],
                     "leadership_climate": metrics["leadership_climate"]["value"],
@@ -408,7 +470,8 @@ class DashboardService:
             recent_daily_for_trend = [
                 checkin
                 for checkin in member_daily
-                if checkin.submitted_at.date() >= date.today() - timedelta(days=13)
+                if checkin.submitted_at.date()
+                >= datetime.utcnow().date() - timedelta(days=13)
             ]
             for checkin in recent_daily_for_trend:
                 recovery_value = self.burnout_service._extract_numeric(
@@ -428,13 +491,13 @@ class DashboardService:
         )
         average_driver_scores = self._average_driver_scores(latest_scores)
         average_condition = (
-            self._derive_score_label(average_ops) if average_ops is not None else "Not Enough Data"
+            self._derive_score_label(average_ops)
+            if average_ops is not None
+            else "Not Enough Data"
         )
         elevated_count = sum(1 for row in burnout_rows if row["is_elevated"])
         moderate_or_higher = sum(
-            1
-            for row in burnout_rows
-            if row["signals_in_risk"] >= 2
+            1 for row in burnout_rows if row["signals_in_risk"] >= 2
         )
         climate_scores = [
             row["leadership_climate"]
@@ -458,10 +521,12 @@ class DashboardService:
             team=scope_team,
             limit=10,
         )
-        current_window = self._build_team_window_snapshot(member_contexts, date.today())
+        current_window = self._build_team_window_snapshot(
+            member_contexts, datetime.utcnow().date()
+        )
         previous_window = self._build_team_window_snapshot(
             member_contexts,
-            date.today() - timedelta(days=14),
+            datetime.utcnow().date() - timedelta(days=14),
         )
         top_risk_signal = self._resolve_top_risk_signal(current_window, previous_window)
         progress_snapshot = self._build_progress_snapshot(
@@ -519,7 +584,9 @@ class DashboardService:
             "stress_distribution": stress_distribution,
             "member_snapshots": burnout_rows,
             "top_risk_signal": top_risk_signal,
-            "recent_actions": [self._serialize_action_log(item) for item in recent_actions],
+            "recent_actions": [
+                self._serialize_action_log(item) for item in recent_actions
+            ],
             "progress_snapshot": progress_snapshot,
             "impact_snapshot_cards": impact_cards,
             "leader_nudges": leader_nudges,
@@ -540,11 +607,13 @@ class DashboardService:
         page_size: int = 10,
     ) -> dict[str, Any]:
         """Return paginated leader team member rows for the selected scope."""
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            department,
-            team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                department,
+                team,
+            )
         )
         member_profiles = await self.profile_repository.list_by_scope(
             organization_name,
@@ -553,10 +622,16 @@ class DashboardService:
         )
         items: list[dict[str, Any]] = []
         for member in member_profiles:
-            latest_score = await self.score_repository.get_latest_by_user_id(member.user_id)
+            latest_score = await self.score_repository.get_latest_by_user_id(
+                member.user_id
+            )
             daily = await self.daily_checkin_repository.list_by_user_id(member.user_id)
-            weekly = await self.weekly_checkin_repository.list_by_user_id(member.user_id)
-            monthly = await self.monthly_checkin_repository.list_by_user_id(member.user_id)
+            weekly = await self.weekly_checkin_repository.list_by_user_id(
+                member.user_id
+            )
+            monthly = await self.monthly_checkin_repository.list_by_user_id(
+                member.user_id
+            )
             burnout_payload = self.burnout_service.build_payload_from_checkins(
                 daily,
                 weekly,
@@ -574,15 +649,23 @@ class DashboardService:
                     "role": member.role,
                     "department": member.department,
                     "team": member.team,
-                    "overall_score": latest_score.overall_score if latest_score else None,
+                    "overall_score": (
+                        latest_score.overall_score if latest_score else None
+                    ),
                     "condition": latest_score.condition if latest_score else None,
                     "burnout_level": risk_level,
-                    "signals_in_risk": burnout_payload["burnout_alert"]["signals_in_risk"],
+                    "signals_in_risk": burnout_payload["burnout_alert"][
+                        "signals_in_risk"
+                    ],
                     "primary_driver": primary_driver,
                     "trend_summary": self._member_trend_summary(
                         {
-                            "stress_value": burnout_payload["metrics"]["stress"]["value"],
-                            "signals_in_risk": burnout_payload["burnout_alert"]["signals_in_risk"],
+                            "stress_value": burnout_payload["metrics"]["stress"][
+                                "value"
+                            ],
+                            "signals_in_risk": burnout_payload["burnout_alert"][
+                                "signals_in_risk"
+                            ],
                         },
                         primary_driver,
                     ),
@@ -590,7 +673,9 @@ class DashboardService:
                         "label": "View Profile",
                         "user_id": str(member.user_id),
                     },
-                    "updated_at": latest_score.created_at.isoformat() if latest_score else None,
+                    "updated_at": (
+                        latest_score.created_at.isoformat() if latest_score else None
+                    ),
                 }
             )
 
@@ -757,7 +842,9 @@ class DashboardService:
                 **members["filters"],
                 "team": dashboard["scope"]["team"],
                 "range": dashboard["selected_range"],
-                "start_date": start_date.isoformat() if start_date is not None else None,
+                "start_date": (
+                    start_date.isoformat() if start_date is not None else None
+                ),
                 "end_date": end_date.isoformat() if end_date is not None else None,
             },
             "members": members,
@@ -810,9 +897,15 @@ class DashboardService:
                 if user is None or not user.is_active:
                     continue
 
-                daily = await self.daily_checkin_repository.list_by_user_id(profile.user_id)
-                weekly = await self.weekly_checkin_repository.list_by_user_id(profile.user_id)
-                monthly = await self.monthly_checkin_repository.list_by_user_id(profile.user_id)
+                daily = await self.daily_checkin_repository.list_by_user_id(
+                    profile.user_id
+                )
+                weekly = await self.weekly_checkin_repository.list_by_user_id(
+                    profile.user_id
+                )
+                monthly = await self.monthly_checkin_repository.list_by_user_id(
+                    profile.user_id
+                )
                 burnout_payload = self.burnout_service.build_payload_from_checkins(
                     daily,
                     weekly,
@@ -895,7 +988,9 @@ class DashboardService:
             "team": profile.team if profile is not None else None,
             "employee_id": profile.employee_id if profile is not None else None,
             "contact_number": profile.contact_number if profile is not None else None,
-            "profile_image_url": profile.profile_image_url if profile is not None else None,
+            "profile_image_url": (
+                profile.profile_image_url if profile is not None else None
+            ),
             "is_verified": user.is_verified,
             "is_active": user.is_active,
             "created_at": user.created_at.isoformat(),
@@ -923,7 +1018,9 @@ class DashboardService:
             "organization_name",
             profile.company if profile is not None else user.organization_name,
         )
-        role_value = updates.get("role", profile.role if profile is not None else user.role)
+        role_value = updates.get(
+            "role", profile.role if profile is not None else user.role
+        )
         self.meta_service.validate_organization_role(organization_name, role_value)
 
         user_updates = {}
@@ -945,7 +1042,9 @@ class DashboardService:
             if "organization_name" in updates:
                 profile_updates["company"] = updates["organization_name"]
             if profile_updates:
-                await self.profile_repository.update_by_user_id(user.id, profile_updates)
+                await self.profile_repository.update_by_user_id(
+                    user.id, profile_updates
+                )
 
         return await self.get_superadmin_user_detail(user_id)
 
@@ -995,7 +1094,9 @@ class DashboardService:
                 "headline": top_risk["headline"],
                 "status": self._risk_panel_status(top_risk, alert_summary),
                 "signal_tags": self._build_risk_signal_tags(alert_summary),
-                "status_report": self._build_risk_status_report(alert_summary, top_risk),
+                "status_report": self._build_risk_status_report(
+                    alert_summary, top_risk
+                ),
                 "explanation": top_risk["summary"],
                 "warning": self._build_risk_warning(alert_summary, dashboard),
                 "driver_impact": self._build_risk_driver_impact(top_risk),
@@ -1033,7 +1134,9 @@ class DashboardService:
             end_date=end_date,
         )
         organization_name = dashboard["scope"]["organization_name"]
-        organization_profiles = await self.profile_repository.list_by_scope(organization_name)
+        organization_profiles = await self.profile_repository.list_by_scope(
+            organization_name
+        )
         team_aggregates = await self._build_superadmin_team_alert_rows(
             current_user,
             organization_name,
@@ -1048,9 +1151,15 @@ class DashboardService:
                 dashboard,
                 team_aggregates,
             ),
-            "top_risk_clusters": self._build_superadmin_top_risk_clusters(team_aggregates),
-            "escalation_alerts": self._build_superadmin_escalation_alerts(team_aggregates),
-            "risk_distribution": self._build_superadmin_alert_risk_distribution(team_aggregates),
+            "top_risk_clusters": self._build_superadmin_top_risk_clusters(
+                team_aggregates
+            ),
+            "escalation_alerts": self._build_superadmin_escalation_alerts(
+                team_aggregates
+            ),
+            "risk_distribution": self._build_superadmin_alert_risk_distribution(
+                team_aggregates
+            ),
             "team_risk_overview": team_aggregates,
         }
 
@@ -1080,7 +1189,9 @@ class DashboardService:
         member_profiles = await self.profile_repository.list_by_scope(organization_name)
         member_contexts = await self._build_member_contexts(member_profiles)
         rows = [
-            await self._build_superadmin_audit_row(log, member_contexts, organization_name)
+            await self._build_superadmin_audit_row(
+                log, member_contexts, organization_name
+            )
             for log in raw_logs
         ]
         filtered_rows = self._filter_superadmin_audit_rows(
@@ -1128,7 +1239,9 @@ class DashboardService:
                 detail=error_response("Audit log not found."),
             )
 
-        member_profiles = await self.profile_repository.list_by_scope(action_log.organization_name)
+        member_profiles = await self.profile_repository.list_by_scope(
+            action_log.organization_name
+        )
         member_contexts = await self._build_member_contexts(member_profiles)
         history_item = self._build_action_history_item(
             action_log,
@@ -1179,11 +1292,13 @@ class DashboardService:
         end_date: date | None = None,
     ) -> dict[str, Any]:
         """Return the leader member detail analysis payload."""
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            department,
-            team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                department,
+                team,
+            )
         )
         member_profiles = await self.profile_repository.list_by_scope(
             organization_name,
@@ -1191,7 +1306,11 @@ class DashboardService:
             scope_team,
         )
         member_profile = next(
-            (profile for profile in member_profiles if str(profile.user_id) == member_user_id),
+            (
+                profile
+                for profile in member_profiles
+                if str(profile.user_id) == member_user_id
+            ),
             None,
         )
         if member_profile is None:
@@ -1200,11 +1319,19 @@ class DashboardService:
                 detail=error_response("Member not found for the selected scope."),
             )
 
-        member_scores = await self.score_repository.list_by_user_id(member_profile.user_id)
+        member_scores = await self.score_repository.list_by_user_id(
+            member_profile.user_id
+        )
         latest_score = member_scores[0] if member_scores else None
-        daily = await self.daily_checkin_repository.list_by_user_id(member_profile.user_id)
-        weekly = await self.weekly_checkin_repository.list_by_user_id(member_profile.user_id)
-        monthly = await self.monthly_checkin_repository.list_by_user_id(member_profile.user_id)
+        daily = await self.daily_checkin_repository.list_by_user_id(
+            member_profile.user_id
+        )
+        weekly = await self.weekly_checkin_repository.list_by_user_id(
+            member_profile.user_id
+        )
+        monthly = await self.monthly_checkin_repository.list_by_user_id(
+            member_profile.user_id
+        )
         burnout_payload = self.burnout_service.build_payload_from_checkins(
             daily,
             weekly,
@@ -1237,10 +1364,16 @@ class DashboardService:
                 "team": member_profile.team,
                 "company": member_profile.company,
                 "profile_image_url": member_profile.profile_image_url,
-                "current_ops_score": latest_score.overall_score if latest_score else None,
+                "current_ops_score": (
+                    latest_score.overall_score if latest_score else None
+                ),
                 "current_condition": latest_score.condition if latest_score else None,
-                "current_status_label": latest_score.condition if latest_score else "No Score",
-                "updated_at": latest_score.created_at.isoformat() if latest_score else None,
+                "current_status_label": (
+                    latest_score.condition if latest_score else "No Score"
+                ),
+                "updated_at": (
+                    latest_score.created_at.isoformat() if latest_score else None
+                ),
             },
             "primary_risk_signal": primary_risk_signal,
             "core_wellness_drivers": self._build_member_driver_breakdown(latest_score),
@@ -1258,7 +1391,9 @@ class DashboardService:
                 start_date=start_date,
                 end_date=end_date,
             ),
-            "signals_14_day": self._build_member_signal_panel(burnout_payload["metrics"]),
+            "signals_14_day": self._build_member_signal_panel(
+                burnout_payload["metrics"]
+            ),
             "leadership_action_log": [
                 self._serialize_action_log(item) for item in scope_actions
             ],
@@ -1374,7 +1509,9 @@ class DashboardService:
             "correlations": self._build_leader_correlations(dashboard),
             "supporting_trends": self._build_leader_supporting_trends(dashboard),
             "predictive_forecast": predictive_forecast,
-            "risk_signals_overview": self._build_leader_risk_signals_overview(dashboard),
+            "risk_signals_overview": self._build_leader_risk_signals_overview(
+                dashboard
+            ),
         }
 
     async def get_superadmin_ai_insights(
@@ -1412,7 +1549,9 @@ class DashboardService:
         organization_profiles = await self.profile_repository.list_by_scope(
             dashboard["scope"]["organization_name"]
         )
-        team_count = len({profile.team for profile in organization_profiles if profile.team})
+        team_count = len(
+            {profile.team for profile in organization_profiles if profile.team}
+        )
         employee_count = len(organization_profiles)
 
         return {
@@ -1494,10 +1633,14 @@ class DashboardService:
             "page_title": "Reports",
             "subtitle": "Analyze and export team performance insights through our sanctuary of data intelligence.",
             "summary_cards": self._build_leader_report_summary_cards(dashboard),
-            "performance_trends": self._build_leader_report_performance_trends(dashboard),
+            "performance_trends": self._build_leader_report_performance_trends(
+                dashboard
+            ),
             "driver_analysis": self._build_leader_report_driver_analysis(dashboard),
             "risk_distribution": self._build_leader_report_risk_distribution(dashboard),
-            "auto_generated_insights": self._build_leader_report_auto_insights(insights, dashboard),
+            "auto_generated_insights": self._build_leader_report_auto_insights(
+                insights, dashboard
+            ),
             "members": members,
             "export": {
                 "enabled": True,
@@ -1567,10 +1710,14 @@ class DashboardService:
             "page_title": "Reports",
             "subtitle": "Analyze and export company’s team performance insights through our sanctuary of data intelligence.",
             "summary_cards": self._build_leader_report_summary_cards(dashboard),
-            "performance_trends": self._build_leader_report_performance_trends(dashboard),
+            "performance_trends": self._build_leader_report_performance_trends(
+                dashboard
+            ),
             "driver_analysis": self._build_leader_report_driver_analysis(dashboard),
             "risk_distribution": self._build_leader_report_risk_distribution(dashboard),
-            "auto_generated_insights": self._build_superadmin_report_auto_insights(insights),
+            "auto_generated_insights": self._build_superadmin_report_auto_insights(
+                insights
+            ),
             "members": members,
             "export": {
                 "enabled": True,
@@ -1604,14 +1751,18 @@ class DashboardService:
             "page_title": "Burnout Risk Details",
             "subtitle": "Real-time analysis based on inputs",
             "summary_cards": {
-                "risk_level": dashboard["alert_summary"]["headline"]
-                if dashboard["alert_summary"]["is_active"]
-                else "Team Risk Status",
+                "risk_level": (
+                    dashboard["alert_summary"]["headline"]
+                    if dashboard["alert_summary"]["is_active"]
+                    else "Team Risk Status"
+                ),
                 "risk_label": dashboard["top_risk_signal"]["label"],
                 "risk_status": dashboard["group_burnout"]["elevated_members"] > 0
                 and "Elevated"
                 or "Watch",
-                "signals_triggered": len(dashboard["alert_summary"]["triggered_signals"]),
+                "signals_triggered": len(
+                    dashboard["alert_summary"]["triggered_signals"]
+                ),
                 "total_signals": 6,
                 "trend_7d": dashboard["top_risk_signal"]["trend"],
             },
@@ -1657,11 +1808,13 @@ class DashboardService:
         team: str | None = None,
     ) -> dict[str, Any]:
         """Return the leader settings page payload."""
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            department,
-            team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                department,
+                team,
+            )
         )
         profile = await self.profile_repository.get_by_user_id(current_user.id)
         profiles = await self.profile_repository.list_by_scope(
@@ -1686,9 +1839,13 @@ class DashboardService:
                     "name": profile.name if profile is not None else current_user.name,
                     "email": current_user.email,
                     "role": profile.role if profile is not None else current_user.role,
-                    "contact_number": profile.contact_number if profile is not None else None,
+                    "contact_number": (
+                        profile.contact_number if profile is not None else None
+                    ),
                     "employee_id": profile.employee_id if profile is not None else None,
-                    "profile_image_url": profile.profile_image_url if profile is not None else None,
+                    "profile_image_url": (
+                        profile.profile_image_url if profile is not None else None
+                    ),
                 },
                 "save_endpoint": "/api/v1/dashboard/leader/settings/profile",
             },
@@ -1696,9 +1853,15 @@ class DashboardService:
                 "title": "Company Information",
                 "subtitle": "Update your company details",
                 "fields": {
-                    "company_name": profile.company if profile is not None else organization_name,
-                    "company_address": profile.company_address if profile is not None else None,
-                    "company_logo_url": profile.company_logo_url if profile is not None else None,
+                    "company_name": (
+                        profile.company if profile is not None else organization_name
+                    ),
+                    "company_address": (
+                        profile.company_address if profile is not None else None
+                    ),
+                    "company_logo_url": (
+                        profile.company_logo_url if profile is not None else None
+                    ),
                 },
                 "save_endpoint": "/api/v1/dashboard/leader/settings/company",
             },
@@ -1707,7 +1870,9 @@ class DashboardService:
                 "subtitle": "Manage your primary organizational scope.",
                 "selected": {
                     "team": profile.team if profile is not None else scope_team,
-                    "department": profile.department if profile is not None else scope_department,
+                    "department": (
+                        profile.department if profile is not None else scope_department
+                    ),
                     "role": profile.role if profile is not None else current_user.role,
                 },
                 "options": {
@@ -1789,7 +1954,9 @@ class DashboardService:
             "notification_action": scope_configuration["notification_action"],
         }
 
-    async def get_superadmin_settings_profile(self, current_user: User) -> dict[str, Any]:
+    async def get_superadmin_settings_profile(
+        self, current_user: User
+    ) -> dict[str, Any]:
         """Return the superadmin profile settings page payload."""
         profile = await self.profile_repository.get_by_user_id(current_user.id)
         return {
@@ -1814,7 +1981,9 @@ class DashboardService:
             "save_endpoint": "/api/v1/dashboard/superadmin/settings/profile",
         }
 
-    async def get_superadmin_settings_company(self, current_user: User) -> dict[str, Any]:
+    async def get_superadmin_settings_company(
+        self, current_user: User
+    ) -> dict[str, Any]:
         """Return the superadmin company settings page payload."""
         profile = await self.profile_repository.get_by_user_id(current_user.id)
         organization_name = (
@@ -1847,11 +2016,13 @@ class DashboardService:
     ) -> dict[str, Any]:
         """Return the superadmin scope settings page payload."""
         profile = await self.profile_repository.get_by_user_id(current_user.id)
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            department,
-            team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                department,
+                team,
+            )
         )
         departments = await self.meta_service.get_departments(organization_name)
         teams = await self.meta_service.get_teams(
@@ -1972,6 +2143,60 @@ class DashboardService:
             "updated_at": setting.updated_at.isoformat(),
         }
 
+    async def get_faqs(self) -> list[dict[str, Any]]:
+        """Fetch all FAQs for superadmin management."""
+        faqs = await self.faq_repository.get_all()
+        return [
+            {
+                "id": str(f.id),
+                "question": f.question,
+                "answer": f.answer,
+                "order": f.order,
+                "updated_at": f.updated_at.isoformat(),
+            }
+            for f in faqs
+        ]
+
+    async def create_faq(self, payload: SuperadminFAQCreate) -> dict[str, Any]:
+        """Create a new FAQ entry."""
+        faq = await self.faq_repository.create(
+            question=payload.question, answer=payload.answer, order=payload.order
+        )
+        return {
+            "id": str(faq.id),
+            "question": faq.question,
+            "answer": faq.answer,
+            "order": faq.order,
+        }
+
+    async def update_faq(
+        self, faq_id: str, payload: SuperadminFAQUpdate
+    ) -> dict[str, Any]:
+        """Update an existing FAQ entry."""
+        update_data = payload.model_dump(exclude_unset=True)
+        faq = await self.faq_repository.update(faq_id, update_data)
+        if not faq:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_response("FAQ not found."),
+            )
+        return {
+            "id": str(faq.id),
+            "question": faq.question,
+            "answer": faq.answer,
+            "order": faq.order,
+        }
+
+    async def delete_faq(self, faq_id: str) -> dict[str, bool]:
+        """Delete an FAQ entry."""
+        success = await self.faq_repository.delete(faq_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=error_response("FAQ not found."),
+            )
+        return {"success": True}
+
     async def update_leader_settings_profile(
         self,
         current_user: User,
@@ -1996,7 +2221,9 @@ class DashboardService:
             in {"name", "role", "contact_number", "employee_id", "profile_image_url"}
         }
         if "role" in profile_updates:
-            self.meta_service.validate_organization_role(profile.company, profile_updates["role"])
+            self.meta_service.validate_organization_role(
+                profile.company, profile_updates["role"]
+            )
         updated_profile = await self.profile_repository.update_by_user_id(
             current_user.id,
             profile_updates,
@@ -2011,8 +2238,12 @@ class DashboardService:
         if "name" in profile_updates:
             user_updates["name"] = profile_updates["name"]
         if "email" in update_payload and update_payload["email"] != current_user.email:
-            existing_user = await self.user_repository.get_by_email(update_payload["email"])
-            if existing_user is not None and str(existing_user.id) != str(current_user.id):
+            existing_user = await self.user_repository.get_by_email(
+                update_payload["email"]
+            )
+            if existing_user is not None and str(existing_user.id) != str(
+                current_user.id
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=error_response(
@@ -2024,7 +2255,9 @@ class DashboardService:
         if "role" in profile_updates:
             user_updates["role"] = profile_updates["role"]
         if user_updates:
-            current_user = await self.user_repository.update_user(str(current_user.id), user_updates)
+            current_user = await self.user_repository.update_user(
+                str(current_user.id), user_updates
+            )
 
         return {
             "profile_information": {
@@ -2137,11 +2370,13 @@ class DashboardService:
         company: str | None = None,
     ) -> dict[str, Any]:
         """Persist an action taken by a leader for the selected scope."""
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            payload.department,
-            payload.team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                payload.department,
+                payload.team,
+            )
         )
         action_log = await self.action_log_repository.create(
             LeaderActionLog(
@@ -2166,11 +2401,13 @@ class DashboardService:
         limit: int = 10,
     ) -> dict[str, Any]:
         """Return recent leader actions for the selected scope."""
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            department,
-            team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                department,
+                team,
+            )
         )
         logs = await self.action_log_repository.list_by_scope(
             organization_name,
@@ -2199,11 +2436,13 @@ class DashboardService:
         page_size: int = 10,
     ) -> dict[str, Any]:
         """Return screenshot-ready action history timeline payload."""
-        organization_name, scope_department, scope_team = await self._resolve_team_scope(
-            current_user,
-            company,
-            department,
-            team,
+        organization_name, scope_department, scope_team = (
+            await self._resolve_team_scope(
+                current_user,
+                company,
+                department,
+                team,
+            )
         )
         member_profiles = await self.profile_repository.list_by_scope(
             organization_name,
@@ -2215,10 +2454,18 @@ class DashboardService:
             member_contexts.append(
                 {
                     "profile": member,
-                    "scores": await self.score_repository.list_by_user_id(member.user_id),
-                    "daily": await self.daily_checkin_repository.list_by_user_id(member.user_id),
-                    "weekly": await self.weekly_checkin_repository.list_by_user_id(member.user_id),
-                    "monthly": await self.monthly_checkin_repository.list_by_user_id(member.user_id),
+                    "scores": await self.score_repository.list_by_user_id(
+                        member.user_id
+                    ),
+                    "daily": await self.daily_checkin_repository.list_by_user_id(
+                        member.user_id
+                    ),
+                    "weekly": await self.weekly_checkin_repository.list_by_user_id(
+                        member.user_id
+                    ),
+                    "monthly": await self.monthly_checkin_repository.list_by_user_id(
+                        member.user_id
+                    ),
                 }
             )
 
@@ -2233,7 +2480,9 @@ class DashboardService:
         scoped_logs = [log for log in raw_logs if log.created_at.date() >= cutoff]
 
         history_items = [
-            self._build_action_history_item(log, member_contexts, scope_team, scope_department)
+            self._build_action_history_item(
+                log, member_contexts, scope_team, scope_department
+            )
             for log in scoped_logs
         ]
         filtered_items = self._filter_action_history_items(history_items, outcome)
@@ -2243,8 +2492,12 @@ class DashboardService:
         total_pages = max(1, ceil(total_items / page_size)) if total_items else 1
 
         latest_window = self._build_team_window_snapshot(member_contexts, date.today())
-        baseline_anchor = max(cutoff - timedelta(days=1), date.today() - timedelta(days=90))
-        baseline_window = self._build_team_window_snapshot(member_contexts, baseline_anchor)
+        baseline_anchor = max(
+            cutoff - timedelta(days=1), date.today() - timedelta(days=90)
+        )
+        baseline_window = self._build_team_window_snapshot(
+            member_contexts, baseline_anchor
+        )
         latest_top_risk = self._resolve_top_risk_signal(latest_window, baseline_window)
         baseline_top_risk = self._resolve_top_risk_signal(baseline_window, None)
 
@@ -2461,15 +2714,16 @@ class DashboardService:
     ) -> tuple[str, str | None, str | None]:
         """Resolve team analytics scope from the user's profile and query overrides."""
         profile = await self.profile_repository.get_by_user_id(current_user.id)
-        profile_company = profile.company if profile is not None else current_user.organization_name
+        profile_company = (
+            profile.company if profile is not None else current_user.organization_name
+        )
         organization_name = company or profile_company
 
         # If a different company is selected explicitly, do not inherit the current
         # user's saved department/team because those values may not exist inside
         # the selected organization and would incorrectly filter out all members.
-        use_profile_scope = (
-            profile is not None
-            and (company is None or company == profile_company)
+        use_profile_scope = profile is not None and (
+            company is None or company == profile_company
         )
         scope_department = (
             department
@@ -2477,9 +2731,7 @@ class DashboardService:
             else (profile.department if use_profile_scope else None)
         )
         scope_team = (
-            team
-            if team is not None
-            else (profile.team if use_profile_scope else None)
+            team if team is not None else (profile.team if use_profile_scope else None)
         )
 
         if organization_name is None and user_has_superadmin_access(current_user):
@@ -2566,9 +2818,9 @@ class DashboardService:
                 key: round(mean(values), 2) if values else None
                 for key, values in dimension_values.items()
             },
-            "average_burnout_signal_count": round(mean(burnout_signal_counts), 2)
-            if burnout_signal_counts
-            else 0.0,
+            "average_burnout_signal_count": (
+                round(mean(burnout_signal_counts), 2) if burnout_signal_counts else 0.0
+            ),
         }
 
     def _resolve_top_risk_signal(
@@ -2629,7 +2881,9 @@ class DashboardService:
                 "summary": "Sleep, energy, and recovery signals point to mounting fatigue risk.",
                 "status": "warning",
                 "metric": metrics["energy"],
-                "affected_members": max(counts["energy"], counts["sleep"], counts["recovery"]),
+                "affected_members": max(
+                    counts["energy"], counts["sleep"], counts["recovery"]
+                ),
             },
             "workload_strain": {
                 "triggered": (
@@ -2644,9 +2898,15 @@ class DashboardService:
             },
             "morale_decline": {
                 "triggered": (
-                    (dimension_averages["MC"] is not None and dimension_averages["MC"] < 70.0)
+                    (
+                        dimension_averages["MC"] is not None
+                        and dimension_averages["MC"] < 70.0
+                    )
                     or (morale_delta is not None and morale_delta <= -5.0)
-                    or (metrics["motivation"] is not None and metrics["motivation"] < 50.0)
+                    or (
+                        metrics["motivation"] is not None
+                        and metrics["motivation"] < 50.0
+                    )
                 ),
                 "headline": "Morale declining over the past 14 days",
                 "summary": "Connection, motivation, or recognition patterns are slipping.",
@@ -2659,7 +2919,9 @@ class DashboardService:
         previous_key = None
         if previous_window is not None:
             previous_signal = self._resolve_top_risk_signal(previous_window, None)
-            previous_key = previous_signal["key"] if previous_signal["is_active"] else None
+            previous_key = (
+                previous_signal["key"] if previous_signal["is_active"] else None
+            )
 
         for key in self.top_risk_priority:
             candidate = candidates[key]
@@ -2702,7 +2964,9 @@ class DashboardService:
         """Return a before-versus-after view for the latest action window."""
         latest_action = recent_actions[0] if recent_actions else None
         if latest_action is not None:
-            window_days = min(max((date.today() - latest_action.created_at.date()).days, 14), 30)
+            window_days = min(
+                max((date.today() - latest_action.created_at.date()).days, 14), 30
+            )
             before_anchor = latest_action.created_at.date() - timedelta(days=1)
         else:
             window_days = 14
@@ -2731,7 +2995,9 @@ class DashboardService:
             "top_risk_change": {
                 "before": before_top_risk["label"],
                 "after": current_top_risk["label"],
-                "status": self._describe_top_risk_change(before_top_risk, current_top_risk),
+                "status": self._describe_top_risk_change(
+                    before_top_risk, current_top_risk
+                ),
             },
             "domain_score_changes": domain_changes,
             "burnout_level_trend": {
@@ -2760,7 +3026,10 @@ class DashboardService:
             )
 
         latest_action = recent_actions[0] if recent_actions else None
-        if latest_action is None or latest_action.created_at.date() <= date.today() - timedelta(days=7):
+        if (
+            latest_action is None
+            or latest_action.created_at.date() <= date.today() - timedelta(days=7)
+        ):
             nudges.append(
                 {
                     "key": "no_action_logged",
@@ -2778,7 +3047,10 @@ class DashboardService:
                 }
             )
 
-        if progress_snapshot["burnout_level_trend"]["status"] == "Worsening" and len(nudges) < 3:
+        if (
+            progress_snapshot["burnout_level_trend"]["status"] == "Worsening"
+            and len(nudges) < 3
+        ):
             nudges.append(
                 {
                     "key": "follow_up",
@@ -2863,9 +3135,9 @@ class DashboardService:
 
         return {
             "is_active": elevated_members > 0 or top_risk_signal["is_active"],
-            "headline": "Active Burnout Alert"
-            if elevated_members > 0
-            else "Team Risk Status",
+            "headline": (
+                "Active Burnout Alert" if elevated_members > 0 else "Team Risk Status"
+            ),
             "risk_level_description": top_risk_signal["summary"],
             "worsening": top_risk_signal["trend"] == "Worsening",
             "triggered_signals": triggered_signals,
@@ -2874,7 +3146,9 @@ class DashboardService:
             "recommended_actions": top_risk_signal["recommended_actions"],
         }
 
-    def _build_impact_cards(self, progress_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_impact_cards(
+        self, progress_snapshot: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Return compact impact snapshot cards for the leader dashboard."""
         cards: list[dict[str, Any]] = []
         cards.append(
@@ -2884,7 +3158,9 @@ class DashboardService:
                 "value": progress_snapshot["top_risk_change"]["status"],
             }
         )
-        sleep_delta = self._find_domain_delta(progress_snapshot["domain_score_changes"], "RC")
+        sleep_delta = self._find_domain_delta(
+            progress_snapshot["domain_score_changes"], "RC"
+        )
         cards.append(
             {
                 "key": "recovery_change",
@@ -3154,7 +3430,9 @@ class DashboardService:
         }
         return recommendation_library.get(risk_key, recommendation_library["none"])
 
-    def _build_signal_breakdown(self, dashboard: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_signal_breakdown(
+        self, dashboard: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Return screenshot-ready signal breakdown rows."""
         member_count = max(dashboard["team_summary"]["member_count"], 1)
         labels = {
@@ -3170,7 +3448,9 @@ class DashboardService:
                 {
                     "key": item["key"],
                     "label": labels.get(item["key"], item["label"]),
-                    "status": self._signal_status_label(item["key"], item["affected_percentage"]),
+                    "status": self._signal_status_label(
+                        item["key"], item["affected_percentage"]
+                    ),
                     "affected_members": item["affected_members"],
                     "affected_percentage": item["affected_percentage"],
                 }
@@ -3194,7 +3474,14 @@ class DashboardService:
                         "affected_percentage": 0.0,
                     }
                 )
-        order = ["sleep", "high_stress", "fatigue", "recovery_deficit", "workload_strain", "morale_decline"]
+        order = [
+            "sleep",
+            "high_stress",
+            "fatigue",
+            "recovery_deficit",
+            "workload_strain",
+            "morale_decline",
+        ]
         sort_index = {key: index for index, key in enumerate(order)}
         return sorted(rows, key=lambda item: sort_index.get(item["key"], 99))
 
@@ -3229,7 +3516,10 @@ class DashboardService:
                     "key": "stress",
                     "label": "Stress",
                     "points": [
-                        {"date": point["date"], "value": self._stress_proxy_from_ops(point["average_ops"])}
+                        {
+                            "date": point["date"],
+                            "value": self._stress_proxy_from_ops(point["average_ops"]),
+                        }
                         for point in ops_trend
                     ],
                 },
@@ -3237,7 +3527,12 @@ class DashboardService:
                     "key": "recovery",
                     "label": "Recovery",
                     "points": [
-                        {"date": point["date"], "value": self._recovery_proxy_from_ops(point["average_ops"])}
+                        {
+                            "date": point["date"],
+                            "value": self._recovery_proxy_from_ops(
+                                point["average_ops"]
+                            ),
+                        }
                         for point in ops_trend
                     ],
                 },
@@ -3281,7 +3576,9 @@ class DashboardService:
                     "action_label": "View Profile",
                 }
             )
-        rows.sort(key=lambda item: 0 if item["risk_level"] == "Elevated Burnout Risk" else 1)
+        rows.sort(
+            key=lambda item: 0 if item["risk_level"] == "Elevated Burnout Risk" else 1
+        )
         return rows[:10]
 
     def _primary_driver_from_snapshot(self, snapshot: dict[str, Any]) -> str:
@@ -3293,7 +3590,9 @@ class DashboardService:
             return "Recovery"
         return "Energy"
 
-    def _member_trend_summary(self, snapshot: dict[str, Any], primary_driver: str) -> str:
+    def _member_trend_summary(
+        self, snapshot: dict[str, Any], primary_driver: str
+    ) -> str:
         """Return a short member trend summary."""
         if primary_driver == "Stress":
             return "High stress trend and worsening focus scores."
@@ -3326,7 +3625,11 @@ class DashboardService:
         return {
             "team_affected_percentage": affected_ratio,
             "most_impacted_driver": dashboard["top_risk_signal"]["label"],
-            "delta_vs_last_window": "+12% vs LW" if dashboard["top_risk_signal"]["trend"] == "Worsening" else "Stable vs LW",
+            "delta_vs_last_window": (
+                "+12% vs LW"
+                if dashboard["top_risk_signal"]["trend"] == "Worsening"
+                else "Stable vs LW"
+            ),
         }
 
     def _infer_primary_driver_for_member(
@@ -3369,7 +3672,9 @@ class DashboardService:
         normalized_filter = risk_filter.lower()
         if normalized_filter == "high":
             filtered = [
-                item for item in filtered if item["burnout_level"] == "Elevated Burnout Risk"
+                item
+                for item in filtered
+                if item["burnout_level"] == "Elevated Burnout Risk"
             ]
         elif normalized_filter == "risk":
             filtered = [
@@ -3431,9 +3736,7 @@ class DashboardService:
             filtered = [item for item in filtered if item["risk_level"] == "Elevated"]
         elif normalized_filter == "risk":
             filtered = [
-                item
-                for item in filtered
-                if item["risk_level"] in {"Elevated", "Watch"}
+                item for item in filtered if item["risk_level"] in {"Elevated", "Watch"}
             ]
         return filtered
 
@@ -3483,7 +3786,9 @@ class DashboardService:
             for item in items
             if item["avg_company_score"] is not None
         ]
-        average_company_score = round(mean(average_values), 2) if average_values else None
+        average_company_score = (
+            round(mean(average_values), 2) if average_values else None
+        )
 
         return [
             {
@@ -3518,7 +3823,9 @@ class DashboardService:
         )
         return {
             "title": "Burnout risk increasing across teams",
-            "label": predictive_forecast.get("label", predictive_forecast.get("forecast")),
+            "label": predictive_forecast.get(
+                "label", predictive_forecast.get("forecast")
+            ),
             "confidence_label": predictive_forecast.get("confidence_label"),
             "confidence_value": predictive_forecast.get(
                 "confidence_value",
@@ -3549,7 +3856,11 @@ class DashboardService:
         dashboard: dict[str, Any],
     ) -> list[dict[str, str]]:
         """Return org-wide cross-team insight tiles."""
-        departments = [profile.department for profile in organization_profiles if profile.department]
+        departments = [
+            profile.department
+            for profile in organization_profiles
+            if profile.department
+        ]
         teams = [profile.team for profile in organization_profiles if profile.team]
         top_risk = dashboard["top_risk_signal"]["label"]
         return [
@@ -3594,19 +3905,23 @@ class DashboardService:
         return [
             {
                 "category": "Cognitive Fatigue",
-                "current_status": "High Risk" if elevated_population >= 30 else "Moderate",
+                "current_status": (
+                    "High Risk" if elevated_population >= 30 else "Moderate"
+                ),
                 "affected_population": f"{stress_population}% of org",
                 "trend": dashboard["top_risk_signal"]["trend"],
             },
             {
                 "category": "Burnout Vulnerability",
                 "current_status": (
-                    "Moderate"
-                    if dashboard["alert_summary"]["is_active"]
-                    else "Low"
+                    "Moderate" if dashboard["alert_summary"]["is_active"] else "Low"
                 ),
                 "affected_population": f"{elevated_population}% of org",
-                "trend": "Stable" if not dashboard["alert_summary"]["is_active"] else "Elevated",
+                "trend": (
+                    "Stable"
+                    if not dashboard["alert_summary"]["is_active"]
+                    else "Elevated"
+                ),
             },
             {
                 "category": "Attrition Risk",
@@ -3624,14 +3939,22 @@ class DashboardService:
         """Return cross-organizational behavioral pattern cards."""
         patterns = leader_payload["behavioral_patterns"]
         correlations = leader_payload["correlations"]
-        first_pattern = patterns[0] if patterns else {
-            "title": "Low sleep is linked to high stress days",
-            "summary": "Observed across multiple teams.",
-        }
-        second_pattern = patterns[1] if len(patterns) > 1 else {
-            "title": "Better energy on days with physical activity",
-            "summary": "Observed as an organization-wide pattern.",
-        }
+        first_pattern = (
+            patterns[0]
+            if patterns
+            else {
+                "title": "Low sleep is linked to high stress days",
+                "summary": "Observed across multiple teams.",
+            }
+        )
+        second_pattern = (
+            patterns[1]
+            if len(patterns) > 1
+            else {
+                "title": "Better energy on days with physical activity",
+                "summary": "Observed as an organization-wide pattern.",
+            }
+        )
         return [
             {
                 "key": "cause_effect",
@@ -3646,12 +3969,14 @@ class DashboardService:
                 "title": second_pattern["title"],
                 "summary": second_pattern["summary"],
                 "badge": (
-                    correlations[0].get("impact")
-                    or correlations[0].get("value")
-                    or "Org-wide pattern"
-                )
-                if correlations
-                else "Org-wide pattern",
+                    (
+                        correlations[0].get("impact")
+                        or correlations[0].get("value")
+                        or "Org-wide pattern"
+                    )
+                    if correlations
+                    else "Org-wide pattern"
+                ),
             },
         ]
 
@@ -3682,7 +4007,9 @@ class DashboardService:
         range_key: str,
     ) -> list[dict[str, Any]]:
         """Return team-level alert rows for the superadmin alerts page."""
-        team_names = sorted({profile.team for profile in organization_profiles if profile.team})
+        team_names = sorted(
+            {profile.team for profile in organization_profiles if profile.team}
+        )
         rows: list[dict[str, Any]] = []
         for team_name in team_names:
             team_dashboard = await self.get_team_dashboard(
@@ -3726,10 +4053,18 @@ class DashboardService:
             member_contexts.append(
                 {
                     "profile": member,
-                    "scores": await self.score_repository.list_by_user_id(member.user_id),
-                    "daily": await self.daily_checkin_repository.list_by_user_id(member.user_id),
-                    "weekly": await self.weekly_checkin_repository.list_by_user_id(member.user_id),
-                    "monthly": await self.monthly_checkin_repository.list_by_user_id(member.user_id),
+                    "scores": await self.score_repository.list_by_user_id(
+                        member.user_id
+                    ),
+                    "daily": await self.daily_checkin_repository.list_by_user_id(
+                        member.user_id
+                    ),
+                    "weekly": await self.weekly_checkin_repository.list_by_user_id(
+                        member.user_id
+                    ),
+                    "monthly": await self.monthly_checkin_repository.list_by_user_id(
+                        member.user_id
+                    ),
                 }
             )
         return member_contexts
@@ -3803,7 +4138,8 @@ class DashboardService:
             filtered = [
                 row
                 for row in filtered
-                if row["user"]["name"] and normalized_user in row["user"]["name"].lower()
+                if row["user"]["name"]
+                and normalized_user in row["user"]["name"].lower()
             ]
 
         cutoff_days = {
@@ -3827,10 +4163,7 @@ class DashboardService:
     ) -> list[dict[str, Any]]:
         """Return summary cards for the audit log page."""
         reference_date = max(
-            (
-                datetime.fromisoformat(row["timestamp"]).date()
-                for row in rows
-            ),
+            (datetime.fromisoformat(row["timestamp"]).date() for row in rows),
             default=date.today(),
         )
         total_today = sum(
@@ -3841,7 +4174,11 @@ class DashboardService:
         warnings = sum(1 for row in rows if row["status"] == "Warning")
         failed = sum(1 for row in rows if row["status"] == "Failed")
         return [
-            {"key": "total_logs_today", "label": "Total Logs Today", "value": total_today},
+            {
+                "key": "total_logs_today",
+                "label": "Total Logs Today",
+                "value": total_today,
+            },
             {"key": "warnings", "label": "Warnings", "value": warnings},
             {"key": "failed_actions", "label": "Failed Actions", "value": failed},
         ]
@@ -3894,16 +4231,26 @@ class DashboardService:
     ) -> list[dict[str, Any]]:
         """Return summary cards for the superadmin risk and alerts page."""
         at_risk_teams = [
-            row for row in team_aggregates if row["risk_status"] in {"Critical", "Elevated"}
+            row
+            for row in team_aggregates
+            if row["risk_status"] in {"Critical", "Elevated"}
         ]
-        most_common = team_aggregates[0]["top_issue"] if team_aggregates else "No dominant risk"
+        most_common = (
+            team_aggregates[0]["top_issue"] if team_aggregates else "No dominant risk"
+        )
         worsening = dashboard["top_risk_signal"]["trend"] == "Worsening"
         return [
             {
                 "key": "current_risk_status",
                 "label": "Current Risk Status",
-                "value": "Elevated" if dashboard["alert_summary"]["is_active"] else "Stable",
-                "meta": "Requires Attention" if dashboard["alert_summary"]["is_active"] else "Monitor",
+                "value": (
+                    "Elevated" if dashboard["alert_summary"]["is_active"] else "Stable"
+                ),
+                "meta": (
+                    "Requires Attention"
+                    if dashboard["alert_summary"]["is_active"]
+                    else "Monitor"
+                ),
             },
             {
                 "key": "teams_at_risk",
@@ -4067,7 +4414,13 @@ class DashboardService:
             return sorted(items, key=lambda item: (item["role"] or "").lower())
         if normalized == "risk":
             order = {"Risk": 0, "Normal": 1}
-            return sorted(items, key=lambda item: (order.get(item["risk_status"], 99), item["name"].lower()))
+            return sorted(
+                items,
+                key=lambda item: (
+                    order.get(item["risk_status"], 99),
+                    item["name"].lower(),
+                ),
+            )
         return sorted(
             items,
             key=lambda item: (
@@ -4076,22 +4429,38 @@ class DashboardService:
             ),
         )
 
-    def _build_leader_member_stats(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _build_leader_member_stats(
+        self, items: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Return summary cards for the leader team members page."""
         total_members = len(items)
         total_teams = len({item["team"] for item in items if item["team"]})
         high_performers = sum(1 for item in items if (item["overall_score"] or 0) >= 85)
         at_risk_members = sum(
-            1 for item in items if item["burnout_level"] in {"Elevated Burnout Risk", "Moderate"}
+            1
+            for item in items
+            if item["burnout_level"] in {"Elevated Burnout Risk", "Moderate"}
         )
-        average_score_values = [item["overall_score"] for item in items if item["overall_score"] is not None]
-        average_team_score = round(mean(average_score_values), 2) if average_score_values else None
+        average_score_values = [
+            item["overall_score"] for item in items if item["overall_score"] is not None
+        ]
+        average_team_score = (
+            round(mean(average_score_values), 2) if average_score_values else None
+        )
 
         return [
             {"key": "total_teams", "label": "Total Team", "value": total_teams},
             {"key": "total_members", "label": "Total Members", "value": total_members},
-            {"key": "high_performers", "label": "High Performers", "value": high_performers},
-            {"key": "at_risk_members", "label": "At-Risk Members", "value": at_risk_members},
+            {
+                "key": "high_performers",
+                "label": "High Performers",
+                "value": high_performers,
+            },
+            {
+                "key": "at_risk_members",
+                "label": "At-Risk Members",
+                "value": at_risk_members,
+            },
             {
                 "key": "avg_team_score",
                 "label": "Avg. Team Score",
@@ -4106,11 +4475,17 @@ class DashboardService:
     ) -> dict[str, Any]:
         """Return a single prioritized risk signal for a member detail page."""
         metrics = burnout_payload["metrics"]
-        driver_scores = latest_score.dimension_scores.model_dump() if latest_score else {}
+        driver_scores = (
+            latest_score.dimension_scores.model_dump() if latest_score else {}
+        )
         signal_key = "none"
-        if metrics["recovery"]["in_risk"] or (driver_scores.get("RC") is not None and driver_scores["RC"] < 45):
+        if metrics["recovery"]["in_risk"] or (
+            driver_scores.get("RC") is not None and driver_scores["RC"] < 45
+        ):
             signal_key = "recovery_deficit"
-        elif metrics["stress"]["in_risk"] or (driver_scores.get("MR") is not None and driver_scores["MR"] < 45):
+        elif metrics["stress"]["in_risk"] or (
+            driver_scores.get("MR") is not None and driver_scores["MR"] < 45
+        ):
             signal_key = "high_stress"
         elif metrics["sleep"]["in_risk"] or metrics["energy"]["in_risk"]:
             signal_key = "fatigue"
@@ -4363,7 +4738,10 @@ class DashboardService:
         return [
             {
                 "title": action,
-                "description": descriptions.get(action, "Take a direct leadership action tied to the current risk signal."),
+                "description": descriptions.get(
+                    action,
+                    "Take a direct leadership action tied to the current risk signal.",
+                ),
             }
             for action in top_risk_signal["recommended_actions"][:3]
         ]
@@ -4376,24 +4754,38 @@ class DashboardService:
         elevated_members = dashboard["group_burnout"]["elevated_members"]
         member_count = max(dashboard["team_summary"]["member_count"], 1)
         burnout_ratio = elevated_members / member_count
-        fatigue_value = "Elevated" if dashboard["top_risk_signal"]["key"] == "fatigue" else "Watch"
+        fatigue_value = (
+            "Elevated" if dashboard["top_risk_signal"]["key"] == "fatigue" else "Watch"
+        )
         workload_value = (
-            "High" if dashboard["top_risk_signal"]["key"] == "workload_strain"
-            else "Moderate" if dashboard["top_risk_signal"]["trend"] == "Worsening"
-            else "Low"
+            "High"
+            if dashboard["top_risk_signal"]["key"] == "workload_strain"
+            else (
+                "Moderate"
+                if dashboard["top_risk_signal"]["trend"] == "Worsening"
+                else "Low"
+            )
         )
         climate_score = dashboard["group_burnout"]["average_leadership_climate"]
         climate_value = (
-            "Resilient" if climate_score is not None and climate_score >= 70
-            else "Stable" if climate_score is not None and climate_score >= 55
-            else "Watch"
+            "Resilient"
+            if climate_score is not None and climate_score >= 70
+            else (
+                "Stable"
+                if climate_score is not None and climate_score >= 55
+                else "Watch"
+            )
         )
         return [
             {
                 "key": "burnout_risk",
                 "label": "Burnout Risk",
                 "status": "high",
-                "value": "Critical" if burnout_ratio >= 0.3 else "Elevated" if elevated_members > 0 else "Low",
+                "value": (
+                    "Critical"
+                    if burnout_ratio >= 0.3
+                    else "Elevated" if elevated_members > 0 else "Low"
+                ),
                 "meta": {"elevated_members": elevated_members},
             },
             {
@@ -4434,7 +4826,9 @@ class DashboardService:
             ),
             None,
         )
-        stress_before = round((stress_after or 0) + 8.4, 1) if stress_after is not None else None
+        stress_before = (
+            round((stress_after or 0) + 8.4, 1) if stress_after is not None else None
+        )
         return {
             "title": "Progress Snapshot (Last 14 Days)",
             "items": [
@@ -4468,7 +4862,9 @@ class DashboardService:
             "title": "Log Action",
             "subtitle": "Record an action taken to address the current risk.",
             "team_summary": {
-                "team_label": dashboard["scope"]["team"] or dashboard["scope"]["department"] or "Selected Team",
+                "team_label": dashboard["scope"]["team"]
+                or dashboard["scope"]["department"]
+                or "Selected Team",
                 "risk_signal": top_risk["headline"],
                 "risk_level": risk_level,
             },
@@ -4506,7 +4902,11 @@ class DashboardService:
         """Return the top summary cards for the reports page."""
         average_ops = dashboard["team_summary"]["average_ops"]
         previous_ops = next(
-            (point["average_ops"] for point in dashboard["ops_trend"] if point["average_ops"] is not None),
+            (
+                point["average_ops"]
+                for point in dashboard["ops_trend"]
+                if point["average_ops"] is not None
+            ),
             average_ops,
         )
         ops_delta = None
@@ -4523,22 +4923,36 @@ class DashboardService:
             {
                 "key": "burnout_risk",
                 "label": "Burnout Risk",
-                "value": "Elevated" if dashboard["group_burnout"]["elevated_members"] > 0 else "Watch",
+                "value": (
+                    "Elevated"
+                    if dashboard["group_burnout"]["elevated_members"] > 0
+                    else "Watch"
+                ),
             },
             {
                 "key": "fatigue_risk",
                 "label": "Fatigue Risk",
-                "value": "Watch" if dashboard["top_risk_signal"]["key"] != "fatigue" else "Elevated",
+                "value": (
+                    "Watch"
+                    if dashboard["top_risk_signal"]["key"] != "fatigue"
+                    else "Elevated"
+                ),
             },
             {
                 "key": "workload_strain",
                 "label": "Workload Strain",
-                "value": "High" if dashboard["top_risk_signal"]["key"] == "workload_strain" else "Moderate",
+                "value": (
+                    "High"
+                    if dashboard["top_risk_signal"]["key"] == "workload_strain"
+                    else "Moderate"
+                ),
             },
             {
                 "key": "leadership_climate",
                 "label": "Leadership Climate",
-                "value": round(climate_score / 10, 1) if climate_score is not None else None,
+                "value": (
+                    round(climate_score / 10, 1) if climate_score is not None else None
+                ),
             },
         ]
 
@@ -4555,7 +4969,11 @@ class DashboardService:
                     "key": "ops_score",
                     "label": "OPS Score",
                     "points": [
-                        {"date": point["date"], "day_label": point["day_label"], "value": point["average_ops"]}
+                        {
+                            "date": point["date"],
+                            "day_label": point["day_label"],
+                            "value": point["average_ops"],
+                        }
                         for point in points
                     ],
                 },
@@ -4578,7 +4996,9 @@ class DashboardService:
                         {
                             "date": point["date"],
                             "day_label": point["day_label"],
-                            "value": self._recovery_proxy_from_ops(point["average_ops"]),
+                            "value": self._recovery_proxy_from_ops(
+                                point["average_ops"]
+                            ),
                         }
                         for point in points
                     ],
@@ -4711,7 +5131,9 @@ class DashboardService:
                 "stress_level": {
                     "before": stress_before,
                     "after": stress_after,
-                    "status": self._describe_history_stress_change(stress_before, stress_after),
+                    "status": self._describe_history_stress_change(
+                        stress_before, stress_after
+                    ),
                 },
             },
             "note": action_log.note or action_log.action,
@@ -4786,7 +5208,9 @@ class DashboardService:
                 "If current trends continue, early burnout risk may emerge within the next 7-10 days."
             )
         elif top_risk["key"] == "high_stress":
-            headline = "Stress pressure is increasing faster than recovery is stabilizing."
+            headline = (
+                "Stress pressure is increasing faster than recovery is stabilizing."
+            )
             summary = (
                 "Current team signals suggest pressure is accumulating across the selected scope. "
                 "Without workload adjustment, strain is likely to intensify over the next cycle."
@@ -4820,7 +5244,11 @@ class DashboardService:
             {
                 "key": "stress_pattern",
                 "title": "Rising Stress Pattern",
-                "status": "Strained" if dashboard["top_risk_signal"]["key"] == "high_stress" else "Watch",
+                "status": (
+                    "Strained"
+                    if dashboard["top_risk_signal"]["key"] == "high_stress"
+                    else "Watch"
+                ),
                 "summary": (
                     "Systematic increase in pressure-correlated indicators over the last 14 business days."
                 ),
@@ -4828,7 +5256,11 @@ class DashboardService:
             {
                 "key": "sleep_inconsistency",
                 "title": "Sleep Inconsistency",
-                "status": "Stable" if (driver_map.get("RC", {}).get("average_score") or 0) >= 55 else "Watch",
+                "status": (
+                    "Stable"
+                    if (driver_map.get("RC", {}).get("average_score") or 0) >= 55
+                    else "Watch"
+                ),
                 "summary": (
                     "Variation in sleep and recovery consistency may be affecting next-day focus and resilience."
                 ),
@@ -4836,7 +5268,11 @@ class DashboardService:
             {
                 "key": "recovery_decline",
                 "title": "Recovery Decline",
-                "status": "Critical" if (driver_map.get("RC", {}).get("average_score") or 100) < 45 else "Warning",
+                "status": (
+                    "Critical"
+                    if (driver_map.get("RC", {}).get("average_score") or 100) < 45
+                    else "Warning"
+                ),
                 "summary": (
                     "Recovery-related patterns suggest the team is not fully resetting between high-demand periods."
                 ),
@@ -4887,7 +5323,9 @@ class DashboardService:
             {
                 "key": "sleep_consistency",
                 "label": "Sleep Consistency",
-                "value": "+12% Recovery" if (recovery_score or 0) >= 50 else "+6% Recovery",
+                "value": (
+                    "+12% Recovery" if (recovery_score or 0) >= 50 else "+6% Recovery"
+                ),
                 "status": "positive",
             },
             {
@@ -4911,7 +5349,12 @@ class DashboardService:
                     "key": "sleep",
                     "label": "Sleep",
                     "points": [
-                        {"date": point["date"], "value": self._recovery_proxy_from_ops(point["average_ops"])}
+                        {
+                            "date": point["date"],
+                            "value": self._recovery_proxy_from_ops(
+                                point["average_ops"]
+                            ),
+                        }
                         for point in points
                     ],
                 },
@@ -4919,7 +5362,10 @@ class DashboardService:
                     "key": "stress",
                     "label": "Stress",
                     "points": [
-                        {"date": point["date"], "value": self._stress_proxy_from_ops(point["average_ops"])}
+                        {
+                            "date": point["date"],
+                            "value": self._stress_proxy_from_ops(point["average_ops"]),
+                        }
                         for point in points
                     ],
                 },
@@ -4927,7 +5373,12 @@ class DashboardService:
                     "key": "recovery",
                     "label": "Recovery",
                     "points": [
-                        {"date": point["date"], "value": self._recovery_proxy_from_ops(point["average_ops"])}
+                        {
+                            "date": point["date"],
+                            "value": self._recovery_proxy_from_ops(
+                                point["average_ops"]
+                            ),
+                        }
                         for point in points
                     ],
                 },
@@ -4942,7 +5393,11 @@ class DashboardService:
         top_risk = dashboard["top_risk_signal"]
         worsening = top_risk["trend"] == "Worsening"
         if top_risk["key"] in {"recovery_deficit", "high_stress", "fatigue"}:
-            forecast = "Burnout Risk Increasing" if worsening or top_risk["is_active"] else "Watch Closely"
+            forecast = (
+                "Burnout Risk Increasing"
+                if worsening or top_risk["is_active"]
+                else "Watch Closely"
+            )
         else:
             forecast = "Performance Stable With Risk Watch"
         confidence = 92 if worsening else 84 if top_risk["is_active"] else 71
@@ -4950,9 +5405,17 @@ class DashboardService:
             "title": "Predictive Forecast",
             "window_label": "Next 7-10 Days",
             "forecast": forecast,
-            "confidence_label": f"High ({confidence}%)" if confidence >= 85 else f"Moderate ({confidence}%)",
+            "confidence_label": (
+                f"High ({confidence}%)"
+                if confidence >= 85
+                else f"Moderate ({confidence}%)"
+            ),
             "confidence_score": confidence,
-            "summary": "Intervention is recommended before the next cycle onset." if top_risk["is_active"] else "Continue monitoring the current signal mix.",
+            "summary": (
+                "Intervention is recommended before the next cycle onset."
+                if top_risk["is_active"]
+                else "Continue monitoring the current signal mix."
+            ),
         }
 
     def _build_leader_risk_signals_overview(
@@ -4990,9 +5453,22 @@ class DashboardService:
                 {
                     "key": key,
                     "risk_type": config["label"],
-                    "severity": "Elevated" if is_top else "Strained" if key in {"recovery_deficit", "fatigue"} else "Nominal",
+                    "severity": (
+                        "Elevated"
+                        if is_top
+                        else (
+                            "Strained"
+                            if key in {"recovery_deficit", "fatigue"}
+                            else "Nominal"
+                        )
+                    ),
                     "contributing_signals": config["contributing"],
-                    "trend": "Worsening" if is_top and dashboard["top_risk_signal"]["trend"] == "Worsening" else "Stable",
+                    "trend": (
+                        "Worsening"
+                        if is_top
+                        and dashboard["top_risk_signal"]["trend"] == "Worsening"
+                        else "Stable"
+                    ),
                 }
             )
         return rows

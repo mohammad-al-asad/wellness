@@ -47,7 +47,9 @@ class ProfileService:
         data: ProfileCreate,
     ) -> dict[str, Any]:
         """Create a profile for the authenticated user."""
-        self._validate_profile_metadata(data.company, data.department, data.team, data.role)
+        self._validate_profile_metadata(
+            data.company, data.department, data.team, data.role
+        )
         existing_profile = await self.profile_repository.get_by_user_id(current_user.id)
         if existing_profile is not None:
             raise HTTPException(
@@ -117,7 +119,9 @@ class ProfileService:
             mirrored_user_fields["role"] = update_payload["role"]
 
         if mirrored_user_fields:
-            await self.user_repository.update_user(str(current_user.id), mirrored_user_fields)
+            await self.user_repository.update_user(
+                str(current_user.id), mirrored_user_fields
+            )
 
         return self._serialize_profile(profile)
 
@@ -143,10 +147,14 @@ class ProfileService:
                 ),
             )
 
-        if settings.AWS_ACCESS_KEY_ID.startswith("your-") or settings.AWS_BUCKET_NAME.startswith("your-"):
+        if settings.AWS_ACCESS_KEY_ID.startswith(
+            "your-"
+        ) or settings.AWS_BUCKET_NAME.startswith("your-"):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=error_response("AWS S3 is not configured for profile image uploads."),
+                detail=error_response(
+                    "AWS S3 is not configured for profile image uploads."
+                ),
             )
 
         file_bytes = await image_file.read()
@@ -159,12 +167,18 @@ class ProfileService:
         file_extension = (image_file.filename or "image").split(".")[-1].lower()
         object_key = f"profile-images/{current_user.id}/{uuid.uuid4()}.{file_extension}"
 
-        self.s3_client.put_object(
-            Bucket=settings.AWS_BUCKET_NAME,
-            Key=object_key,
-            Body=file_bytes,
-            ContentType=image_file.content_type,
-        )
+        try:
+            self.s3_client.put_object(
+                Bucket=settings.AWS_BUCKET_NAME,
+                Key=object_key,
+                Body=file_bytes,
+                ContentType=image_file.content_type,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=error_response(f"S3 Upload failed: {str(exc)}"),
+            ) from exc
         image_url = (
             f"https://{settings.AWS_BUCKET_NAME}.s3."
             f"{settings.AWS_REGION}.amazonaws.com/{object_key}"

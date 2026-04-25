@@ -15,6 +15,8 @@ from app.schemas.dashboard import (
     LeaderSettingsCompanyUpdate,
     LeaderSettingsProfileUpdate,
     LeaderSettingsScopeUpdate,
+    SuperadminFAQCreate,
+    SuperadminFAQUpdate,
     SuperadminLegalContentUpdate,
     SuperadminUserUpdate,
     TeamActionLogCreate,
@@ -35,6 +37,15 @@ async def get_home_dashboard(
     """Return the complete home dashboard payload."""
     data = await dashboard_service.get_home_dashboard(current_user)
     return success_response("Home dashboard fetched successfully", data)
+
+
+@router.get("/checkin-status", status_code=status.HTTP_200_OK)
+async def get_checkin_status(
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Return the next required check-in type for the user."""
+    data = await dashboard_service.get_checkin_status(current_user.id)
+    return success_response("Check-in status fetched successfully.", data)
 
 
 @router.get("/progress", status_code=status.HTTP_200_OK)
@@ -1043,3 +1054,43 @@ async def update_superadmin_settings_scope(
     """Update the superadmin settings scope section."""
     data = await dashboard_service.update_leader_settings_scope(current_user, payload)
     return success_response("Superadmin scope settings updated successfully.", data)
+
+
+@router.get("/superadmin/faqs", status_code=status.HTTP_200_OK)
+async def get_superadmin_faqs(
+    current_user: User = Depends(get_current_superadmin_user),
+) -> dict[str, Any]:
+    """Get all FAQs for superadmin management."""
+    data = await dashboard_service.get_faqs()
+    return success_response("FAQs retrieved successfully.", data)
+
+
+@router.post("/superadmin/faqs", status_code=status.HTTP_201_CREATED)
+async def create_superadmin_faq(
+    payload: SuperadminFAQCreate,
+    current_user: User = Depends(get_current_superadmin_user),
+) -> dict[str, Any]:
+    """Create a new FAQ."""
+    data = await dashboard_service.create_faq(payload)
+    return success_response("FAQ created successfully.", data)
+
+
+@router.patch("/superadmin/faqs/{faq_id}", status_code=status.HTTP_200_OK)
+async def update_superadmin_faq(
+    faq_id: str,
+    payload: SuperadminFAQUpdate,
+    current_user: User = Depends(get_current_superadmin_user),
+) -> dict[str, Any]:
+    """Update an existing FAQ."""
+    data = await dashboard_service.update_faq(faq_id, payload)
+    return success_response("FAQ updated successfully.", data)
+
+
+@router.delete("/superadmin/faqs/{faq_id}", status_code=status.HTTP_200_OK)
+async def delete_superadmin_faq(
+    faq_id: str,
+    current_user: User = Depends(get_current_superadmin_user),
+) -> dict[str, Any]:
+    """Delete an FAQ."""
+    await dashboard_service.delete_faq(faq_id)
+    return success_response("FAQ deleted successfully.", None)

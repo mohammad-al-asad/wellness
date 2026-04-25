@@ -51,11 +51,42 @@ class AIService:
         prompt = (
             "You are a wellness and performance assistant for Dominion Wellness Solutions. "
             "Provide exactly 3 concise improvement recommendations. "
-            "Each recommendation should be one short bullet-style sentence without numbering. "
+            "Each recommendation must follow the format: 'Topic: One short description sentence'. "
+            "Example: 'Hydration: Drink at least 2 liters of water daily to maintain energy.' "
+            "DO NOT use 'Recommended Action' or the section name as the Topic. "
+            "The Topic should be the specific subject (e.g., Sleep, Stress, Nutrition, Focus). "
             "Focus on the user's weakest dimensions. Keep it non-clinical.\n\n"
             f"{self._build_score_context(score)}"
         )
         fallback = self._fallback_improvement_plan(score)
+        return await self._generate_text(prompt, fallback)
+
+    async def generate_goal_plan(self, score: Score) -> str:
+        """Generate a list of short-term goals based on the score snapshot."""
+        prompt = (
+            "You are a wellness and performance assistant for Dominion Wellness Solutions. "
+            "Provide exactly 3-4 concise short-term wellness goals. "
+            "Each goal must follow the format: 'Goal: One short action sentence'. "
+            "Example: 'Consistent Bedtime: Aim for a consistent bedtime within 30 minutes every night.' "
+            "DO NOT use 'Goal' as the Title part of 'Title: Description'. Use a descriptive category instead. "
+            "Focus on sustainable growth across all dimensions. Keep it non-clinical.\n\n"
+            f"{self._build_score_context(score)}"
+        )
+        fallback = self._fallback_goal_plan(score)
+        return await self._generate_text(prompt, fallback)
+
+    async def generate_risk_plan(self, score: Score) -> str:
+        """Generate a list of potential risks detected in the score snapshot."""
+        prompt = (
+            "You are a wellness and performance assistant for Dominion Wellness Solutions. "
+            "Identify exactly 3-4 potential performance risks based on the score data. "
+            "Each risk must follow the format: 'Risk Type: One short descriptive sentence'. "
+            "Example: 'Burnout Signal: Low recovery scores suggest a risk of physical burnout if workload remains high.' "
+            "DO NOT use 'Risk' or 'Risk Detected' as the Title part. Use the specific risk name. "
+            "Be observant but not alarmist. Keep it non-clinical.\n\n"
+            f"{self._build_score_context(score)}"
+        )
+        fallback = self._fallback_risk_plan(score)
         return await self._generate_text(prompt, fallback)
 
     async def answer_question(self, current_user: User, question: str) -> dict[str, Any]:
@@ -185,11 +216,12 @@ class AIService:
                         {"role": "user", "content": prompt},
                     ],
                 ),
-                timeout=1.0,
+                timeout=15.0,
             )
             content = response.choices[0].message.content
             return content.strip() if content else fallback
-        except Exception:
+        except Exception as e:
+            print(f"AI Generation Error: {e}")
             return fallback
 
     def _build_score_context(self, score: Score) -> str:
@@ -282,32 +314,50 @@ class AIService:
         weakest_key, _, _ = self._get_weakest_dimension(score.dimension_scores)
         plan_map = {
             "PC": [
-                "Add one short movement block each morning.",
-                "Prioritize balanced meals and steady hydration.",
-                "Reduce gaps between meals during busy workdays.",
+                "Morning Movement: Add one short movement block each morning.",
+                "Steady Hydration: Prioritize balanced meals and steady hydration.",
+                "Consistent Fueling: Reduce gaps between meals during busy workdays.",
             ],
             "MR": [
-                "Use one fixed daily stress-reset routine.",
-                "Protect focused work time from interruptions.",
-                "Schedule a short decompression break after pressure-heavy tasks.",
+                "Stress Reset: Use one fixed daily stress-reset routine.",
+                "Deep Focus: Protect focused work time from interruptions.",
+                "Task Decompression: Schedule a short decompression break after pressure-heavy tasks.",
             ],
             "MC": [
-                "Create one intentional connection moment with a teammate each day.",
-                "Ask for clarity or feedback when support feels low.",
-                "Use short breaks to reset before long work blocks.",
+                "Team Connection: Create one intentional connection moment with a teammate each day.",
+                "Clear Communication: Ask for clarity or feedback when support feels low.",
+                "Reset Breaks: Use short breaks to reset before long work blocks.",
             ],
             "PA": [
-                "Set three meaningful priorities at the start of each day.",
-                "Review workload weekly and remove low-value tasks.",
-                "Reconnect daily work to longer-term goals.",
+                "Daily Priorities: Set three meaningful priorities at the start of each day.",
+                "Workload Review: Review workload weekly and remove low-value tasks.",
+                "Goal Alignment: Reconnect daily work to longer-term goals.",
             ],
             "RC": [
-                "Keep a more consistent sleep and wake time this week.",
-                "Add a short recovery break during demanding days.",
-                "Reduce evening stimulation before sleep.",
+                "Sleep Schedule: Keep a more consistent sleep and wake time this week.",
+                "Recovery Breaks: Add a short recovery break during demanding days.",
+                "Digital Detox: Reduce evening stimulation before sleep.",
             ],
         }
         return "\n".join(plan_map[weakest_key])
+
+    def _fallback_goal_plan(self, score: Score) -> str:
+        """Return a deterministic goal plan when the AI provider is unavailable."""
+        return (
+            "Sleep Recovery: Aim for 7-8 hours of sleep tonight\n"
+            "Recovery Break: Take a short 10-minute recovery break today\n"
+            "Light Movement: A short walk or stretch can help restore focus\n"
+            "Recovery Reset: Take a short break to reset your energy and focus."
+        )
+
+    def _fallback_risk_plan(self, score: Score) -> str:
+        """Return a deterministic risk plan when the AI provider is unavailable."""
+        return (
+            "Sleep Recovery: Aim for 7-8 hours of sleep tonight\n"
+            "Recovery Break: Take a short 10-minute recovery break today\n"
+            "Light Movement: A short walk or stretch can help restore focus\n"
+            "Recovery Reset: Take a short break to reset your energy and focus."
+        )
 
     def _fallback_answer(self, score: Score, question: str, user_name: str) -> str:
         """Return a deterministic assistant answer when the AI provider is unavailable."""

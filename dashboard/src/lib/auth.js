@@ -48,5 +48,7 @@ export function getDashboardPrefix() {
 
 export function getDashboardPath(path = "") {
   const normalizedPath = String(path || "").replace(/^\/+/, "");
+  console.log(`/dashboard/${getDashboardPrefix()}${normalizedPath ? `/${normalizedPath}` : ""}`);
+  
   return `/dashboard/${getDashboardPrefix()}${normalizedPath ? `/${normalizedPath}` : ""}`;
 }

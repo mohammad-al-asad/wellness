@@ -32,11 +32,15 @@ async def get_latest_insight(
 
     insight = await ai_service.generate_insight(latest_score)
     improvement_plan = await ai_service.generate_improvement_plan(latest_score)
+    goal_plan = await ai_service.generate_goal_plan(latest_score)
+    risk_plan = await ai_service.generate_risk_plan(latest_score)
     return success_response(
         "Latest insight fetched successfully.",
         {
             "insight": insight,
             "improvement_plan": improvement_plan,
+            "goal_plan": goal_plan,
+            "risk_plan": risk_plan,
             "overall_score": latest_score.overall_score,
             "condition": latest_score.condition,
             "dimension_scores": latest_score.dimension_scores.model_dump(),
@@ -62,12 +66,16 @@ async def generate_insight(
 
     insight = await ai_service.generate_insight(latest_score)
     improvement_plan = await ai_service.generate_improvement_plan(latest_score)
+    goal_plan = await ai_service.generate_goal_plan(latest_score)
+    risk_plan = await ai_service.generate_risk_plan(latest_score)
     return success_response(
         "Insight generated successfully.",
         {
             "force_refresh": payload.force_refresh,
             "insight": insight,
             "improvement_plan": improvement_plan,
+            "goal_plan": goal_plan,
+            "risk_plan": risk_plan,
             "trend_insight": await dashboard_service.get_trend_insight(current_user.id),
             "last_updated_at": latest_score.created_at.isoformat(),
             "live_sync_status": await dashboard_service.get_live_sync_status(current_user.id),

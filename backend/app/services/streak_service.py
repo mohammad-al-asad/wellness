@@ -1,6 +1,6 @@
 """Behavior streak calculation service."""
 
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
 
 from beanie import PydanticObjectId
 
@@ -65,9 +65,7 @@ class StreakService:
             BehaviorType.GRATITUDE_REFLECTION,
         )
         week_progress = self._build_current_week_progress(behavior_by_day)
-        completed_days = sum(
-            1 for item in week_progress if bool(item["completed"])
-        )
+        completed_days = sum(1 for item in week_progress if bool(item["completed"]))
 
         return {
             "reflection_streak_days": reflection_streak_days,
@@ -102,7 +100,7 @@ class StreakService:
         if not behavior_by_day:
             return 0
 
-        today = date.today()
+        today = datetime.utcnow().date()
         current_day = (
             today
             if behavior_type in behavior_by_day.get(today, set())
@@ -121,7 +119,7 @@ class StreakService:
         behavior_by_day: dict[date, set[BehaviorType]],
     ) -> list[dict[str, object]]:
         """Return Monday-to-Sunday reflection completion data for the current week."""
-        today = date.today()
+        today = datetime.utcnow().date()
         week_start = today - timedelta(days=today.weekday())
         day_labels = ["M", "T", "W", "T", "F", "S", "S"]
         progress: list[dict[str, object]] = []

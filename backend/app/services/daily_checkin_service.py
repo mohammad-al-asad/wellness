@@ -40,7 +40,9 @@ class DailyCheckInService:
 
     async def list_questions(self, page: int = 1) -> dict[str, Any]:
         """Return paginated daily check-in questions ordered for display."""
-        questions = sorted(DAILY_CHECKIN_QUESTION_BANK, key=lambda question: question["order"])
+        questions = sorted(
+            DAILY_CHECKIN_QUESTION_BANK, key=lambda question: question["order"]
+        )
         total = len(questions)
         total_pages = (total + self.QUESTION_PAGE_SIZE - 1) // self.QUESTION_PAGE_SIZE
         current_page = min(max(page, 1), max(total_pages, 1))
@@ -79,7 +81,9 @@ class DailyCheckInService:
                 detail=error_response("Daily check-in already completed for today."),
             )
 
-        question_map = {question["id"]: question for question in DAILY_CHECKIN_QUESTION_BANK}
+        question_map = {
+            question["id"]: question for question in DAILY_CHECKIN_QUESTION_BANK
+        }
         submitted_ids = [answer.question_id for answer in payload.answers]
 
         if len(set(submitted_ids)) != DAILY_CHECKIN_QUESTION_COUNT:
@@ -96,7 +100,9 @@ class DailyCheckInService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_response(
                     "Submitted daily answers do not match the required question set.",
-                    {"answers": "All 8 required daily questions must be answered exactly once."},
+                    {
+                        "answers": "All 8 required daily questions must be answered exactly once."
+                    },
                 ),
             )
 
@@ -108,11 +114,15 @@ class DailyCheckInService:
         daily_checkin = await self.daily_checkin_repository.create(
             DailyCheckIn(user_id=current_user.id, answers=normalized_answers)
         )
+        behaviors = payload.behaviors or []
+        if BehaviorType.GRATITUDE_REFLECTION not in behaviors:
+            behaviors.append(BehaviorType.GRATITUDE_REFLECTION)
+
         behavior_log = await self.behavior_log_repository.upsert_for_period(
             current_user.id,
             daily_checkin.submitted_at.date(),
             "daily",
-            self._normalize_behaviors(payload.behaviors),
+            self._normalize_behaviors(behaviors),
         )
         score_snapshot = await self._create_score_snapshot(
             current_user,
@@ -131,7 +141,9 @@ class DailyCheckInService:
             "behavior_log_id": str(behavior_log.id),
             "behaviors": [behavior.value for behavior in behavior_log.behaviors],
             "score_snapshot_created": score_snapshot is not None,
-            "score_snapshot_id": str(score_snapshot.id) if score_snapshot is not None else None,
+            "score_snapshot_id": (
+                str(score_snapshot.id) if score_snapshot is not None else None
+            ),
             "reflection_streak_days": streak_summary["reflection_streak_days"],
             "week_progress": streak_summary["week_progress"],
             "weekly_completed_days": streak_summary["weekly_completed_days"],
@@ -142,7 +154,8 @@ class DailyCheckInService:
         """Validate and normalize a submitted daily answer."""
         normalized_input = answer_text.strip().casefold()
         options_lookup = {
-            option.strip().casefold(): index for index, option in enumerate(question["options"])
+            option.strip().casefold(): index
+            for index, option in enumerate(question["options"])
         }
 
         if normalized_input not in options_lookup:
@@ -150,7 +163,11 @@ class DailyCheckInService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_response(
                     "Invalid daily check-in answer option submitted.",
-                    {question["id"]: f"Answer must match one of: {', '.join(question['options'])}"},
+                    {
+                        question[
+                            "id"
+                        ]: f"Answer must match one of: {', '.join(question['options'])}"
+                    },
                 ),
             )
 
@@ -189,29 +206,40 @@ class DailyCheckInService:
         normalized_answers: list[Answer],
     ) -> Score | None:
         """Persist a merged score snapshot using the latest available score as baseline."""
-        latest_score = await self.score_repository.get_latest_by_user_id(current_user.id)
+        latest_score = await self.score_repository.get_latest_by_user_id(
+            current_user.id
+        )
         if latest_score is None:
             return None
 
-        partial_dimension_scores = await self.scoring_service.calculate_dimension_scores(
-            normalized_answers
+        partial_dimension_scores = (
+            await self.scoring_service.calculate_dimension_scores(normalized_answers)
         )
         answered_drivers = {answer.driver for answer in normalized_answers}
         merged_dimension_scores = latest_score.dimension_scores.model_dump()
-        onboarding_checkins = await self.assessment_repository.list_by_user_id(current_user.id)
+        onboarding_checkins = await self.assessment_repository.list_by_user_id(
+            current_user.id
+        )
         onboarding_days = (
-            (daily_checkin.submitted_at.date() - onboarding_checkins[0].submitted_at.date()).days
+            (
+                daily_checkin.submitted_at.date()
+                - onboarding_checkins[0].submitted_at.date()
+            ).days
             if onboarding_checkins
             else 0
         )
 
         for driver in merged_dimension_scores:
             if driver in answered_drivers:
-                merged_dimension_scores[driver] = getattr(partial_dimension_scores, driver)
+                merged_dimension_scores[driver] = getattr(
+                    partial_dimension_scores, driver
+                )
             elif onboarding_checkins:
-                merged_dimension_scores[driver] = self.scoring_service.apply_baseline_decay(
-                    merged_dimension_scores[driver],
-                    onboarding_days,
+                merged_dimension_scores[driver] = (
+                    self.scoring_service.apply_baseline_decay(
+                        merged_dimension_scores[driver],
+                        onboarding_days,
+                    )
                 )
 
         dimension_scores = latest_score.dimension_scores.model_copy(

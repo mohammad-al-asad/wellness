@@ -18,6 +18,8 @@ from app.models.intervention_memory import InterventionMemory
 from app.models.profile import Profile
 from app.models.question import Question
 from app.models.score import Score
+from app.models.support_request import SupportRequest
+from app.models.faq import FAQ
 from app.models.user import User
 from app.utils.constants import QUESTION_BANK
 
@@ -53,9 +55,12 @@ async def init_db() -> None:
             InterventionMemory,
             Score,
             Question,
+            SupportRequest,
+            FAQ,
         ],
     )
     await seed_questions()
+    await seed_faqs()
 
 
 async def seed_questions() -> None:
@@ -72,6 +77,36 @@ async def seed_questions() -> None:
     await Question.find_all().delete()
     question_documents = [Question(**question_data) for question_data in QUESTION_BANK]
     await Question.insert_many(question_documents)
+
+
+async def seed_faqs() -> None:
+    """Seed initial FAQs if none exist."""
+    if await FAQ.count() > 0:
+        return
+
+    initial_faqs = [
+        {
+            "question": "What is OPS Score?",
+            "answer": "Your overall performance score based on your daily and weekly inputs. It reflects your readiness across physical, mental, and recovery drivers.",
+            "order": 1,
+        },
+        {
+            "question": "How is my score calculated?",
+            "answer": "Scores are calculated from your assessment answers, grouped into five drivers, normalized to a 0-100 scale, and combined into an overall OPS score.",
+            "order": 2,
+        },
+        {
+            "question": "How can I improve my score?",
+            "answer": "Focus on the lowest driver in your dashboard, maintain consistent daily check-ins, and follow the recommended improvement actions.",
+            "order": 3,
+        },
+        {
+            "question": "How often should I check in?",
+            "answer": "Daily check-ins should be completed every day, weekly check-ins unlock after 7 daily check-ins, and monthly check-ins unlock after 30 completed daily check-ins.",
+            "order": 4,
+        },
+    ]
+    await FAQ.insert_many([FAQ(**f) for f in initial_faqs])
 
 
 def get_database() -> AsyncDatabase:
