@@ -31,12 +31,14 @@ async def init_db() -> None:
     """Initialize the MongoDB client and register Beanie document models."""
     global client, database
 
-    client = AsyncMongoClient(
-        settings.MONGODB_URL,
-        tls=True,
-        tlsCAFile=certifi.where(),
-        serverSelectionTimeoutMS=30000,
-    )
+    client_options: dict[str, object] = {
+        "serverSelectionTimeoutMS": 30000,
+    }
+    if settings.MONGODB_TLS:
+        client_options["tls"] = True
+        client_options["tlsCAFile"] = certifi.where()
+
+    client = AsyncMongoClient(settings.MONGODB_URL, **client_options)
     database = client[settings.MONGODB_DB_NAME]
 
     await init_beanie(
