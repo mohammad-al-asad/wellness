@@ -1,0 +1,61 @@
+/* Dominion Wellness Solutions - Global Styles */
+
+:root {
+  --color-primary: #0D2B6E;
+  --color-primary-dark: #091E52;
+  --color-primary-light: #1A3A8F;
+  --color-accent: #1CC8B0;
+  --color-accent-dark: #14A090;
+  --color-white: #FFFFFF;
+  --color-offwhite: #F0F4FF;
+  --color-lightgray: #C8D4EA;
+  --color-darkgray: #3A4F7A;
+  
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #C8D4EA;
+  
+  --font-base: 'var(--font-manrope)', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: var(--color-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: var(--color-accent);
+}
+
+/* Base Utility Classes for Layout if needed */
+.main-container {
+  min-height: calc(100vh - 80px - 100px); /* Adjust based on Nav and Footer height */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Glassmorphism utilities */
+.glass {
+  background: rgba(13, 43, 110, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}

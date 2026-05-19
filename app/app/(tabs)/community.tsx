@@ -13,8 +13,9 @@ import {
   Easing,
   KeyboardEvent,
   KeyboardAvoidingView,
+  Modal,
 } from "react-native";
-import { X, Mic, ArrowUp } from "lucide-react-native";
+import { X, Mic, ArrowUp, Sparkles } from "lucide-react-native";
 import { FontFamily } from "../../src/constants/typography";
 import { useNavigation } from "@react-navigation/native";
 import { 
@@ -26,6 +27,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AnimatedTypingDots from "../../src/components/AnimatedTypingDots";
 import TypewriterText from "../../src/components/TypewriterText";
+import { useAppSelector } from "../../src/redux/reduxHooks";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { ChatHistorySkeleton } from "../../src/components/ChatHistorySkeleton";
 
@@ -36,6 +39,34 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState("");
   const [lastAnimatedIndex, setLastAnimatedIndex] = useState(-1);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+
+  const user = useAppSelector((state) => state.auth.user);
+  const userId = user?.id || "guest";
+  
+  const [showModal, setShowModal] = useState(false);
+
+  useEffect(() => {
+    const checkModalStatus = async () => {
+      try {
+        const hasSeen = await AsyncStorage.getItem(`hasSeenAIModal_${userId}`);
+        if (hasSeen !== "true") {
+          setShowModal(true);
+        }
+      } catch (error) {
+        console.error("Failed to load AI modal status", error);
+      }
+    };
+    checkModalStatus();
+  }, [userId]);
+
+  const handleCloseModal = async () => {
+    setShowModal(false);
+    try {
+      await AsyncStorage.setItem(`hasSeenAIModal_${userId}`, "true");
+    } catch (error) {
+      console.error("Failed to save AI modal status", error);
+    }
+  };
 
   // Animated value for keyboard height
   const keyboardHeight = useRef(new Animated.Value(0)).current;
@@ -131,6 +162,30 @@ export default function ChatScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "padding"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
+      {/* ─── AI processing disclosure Modal ─── */}
+      <Modal
+        transparent={true}
+        visible={showModal}
+        animationType="fade"
+        onRequestClose={handleCloseModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconContainer}>
+              <Sparkles size={24} color="#00A896" />
+            </View>
+            <Text style={styles.modalTitle}>AI Processing Disclosure</Text>
+            <Text style={styles.modalDescription}>
+              Dominion Wellness Solutions integrates artificial intelligence to provide tailored guidance.{"\n\n"}
+              Please note that your assistant responses are processed via <Text style={styles.modalBoldText}>OpenAI</Text>. To generate precise, custom insights, your daily check-in <Text style={styles.modalBoldText}>assessments</Text> and <Text style={styles.modalBoldText}>profile data</Text> are securely shared to build your contextual behavioral responses.{"\n\n"}
+              No other personal credentials or private identifiers are shared.
+            </Text>
+            <TouchableOpacity style={styles.modalButton} onPress={handleCloseModal} activeOpacity={0.85}>
+              <Text style={styles.modalButtonText}>I UNDERSTAND</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       {/* ─── Floating Header Card ─── */}
       <View style={[styles.headerCard, { marginTop: insets.top + 16 }]}>
         <View style={styles.headerLeft}>
@@ -483,5 +538,69 @@ const styles = StyleSheet.create({
     backgroundColor: "#00A896", // Teal arrow button
     alignItems: "center",
     justifyContent: "center",
+  },
+  
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 24,
+    width: "100%",
+    maxWidth: 340,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  modalIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(0, 168, 150, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontFamily: FontFamily.bold,
+    fontSize: 18,
+    color: "#001F3F",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  modalDescription: {
+    fontFamily: FontFamily.regular,
+    fontSize: 13,
+    color: "#475569",
+    lineHeight: 18,
+    textAlign: "center",
+    marginBottom: 20,
+  },
+  modalBoldText: {
+    fontFamily: FontFamily.bold,
+    color: "#001F3F",
+  },
+  modalButton: {
+    width: "100%",
+    backgroundColor: "#001F3F",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalButtonText: {
+    fontFamily: FontFamily.bold,
+    color: "#FFFFFF",
+    fontSize: 14,
+    letterSpacing: 0.5,
   },
 });
