@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB_NAME: str = "wellness_db"
+    MONGODB_TLS: bool = False
 
     RESEND_API_KEY: str = "your-resend-api-key"
     FROM_EMAIL: str = "noreply@example.com"

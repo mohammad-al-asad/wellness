@@ -1,0 +1,27 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: dws-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dws-backend
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      MONGODB_DB_NAME: wellness_db
+      MONGODB_TLS: "false"
+    ports:
+      - "8000:8000"
+
+volumes:
+  mongodb_data:
